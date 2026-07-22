@@ -259,7 +259,7 @@ class Instance implements API {
             const newLineParams: typeof params.line_params = {};
             generated.forEach(e => {
                 const p = params.line_params[e.lineId];
-                if (p === undefined || e.stop || (p?.max_tokens !== undefined && p.max_tokens < 0)) {
+                if (p === undefined || e.stop || (p?.max_tokens !== undefined && p.max_tokens <= 0)) {
                     return;
                 }
                 newLineParams[e.lineId] = p;
@@ -356,7 +356,7 @@ class Instance implements API {
                 if ((lineConfig.eog_stop ?? false) && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
                     stopReasons.push("eog_stop");
                 }
-                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens < 0) {
+                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 0) {
                     stopReasons.push("max_tokens");
                 }
                 return { lineId, token, entropy, input, replace: trimmedLines.some(e => e === lineId), stop: stopReasons.length > 0, stopReasons } as Generated;
