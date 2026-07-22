@@ -652,7 +652,7 @@ export type TokenSequence = {
     stopReasons: StopReason[]
 };
 export type StopCondition = InferenceLineParams;
-export type ContentElem = string | number | number[] | { special: boolean, text: string };
+export type ContentElem = string | number | number[] | { special: boolean, text: string } | TemplateInput;
 export type TemplateInput = {
     messages: {
         role: "system" | "user" | "assistant" | "tool",
@@ -745,6 +745,8 @@ export class ClientLine {
                     clearContent.push(prev);
                     clearContent.push(current);
                 }
+            } else if (typeof e === "object" && "messages" in e) {
+                clearContent.push(parse(this.client.scheme(e)));
             } else {
                 clearContent.push(parse(e));
             }
