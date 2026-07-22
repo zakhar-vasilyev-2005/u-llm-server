@@ -688,6 +688,7 @@ export class ClientLine {
     }
     public tokens: Token[] = [];
     public unparsedTokens: number[] = [];
+    public pushedLength: number = 0;
     public async pullRaw(action: () => void, stopCond: (events: TokensEvent[]) => boolean = e => !!e.at(-1)?.stop) {
         const { last, replace, tokens } = await new Promise<{ tokens: Token[], replace: boolean, last: TokensEvent }>(async resolve => {
             let tokens: Token[] = [];
@@ -718,14 +719,15 @@ export class ClientLine {
         }
         this.tokens.push(...tokens);
         this.unparsedTokens = next === null ? [] : [next.token];
+        this.pushedLength = 0;
         return { tokens, entropy, replace, next, stopReasons } as TokenSequence;
     }
     public async pull(stop: StopCondition) {
-        const prefixSize = this.unparsedTokens.length;
+        const pushedLength = this.pushedLength;
         await this.client.exec("line_init", { line_id: this.lineId, inference: stop });
         const { tokens, entropy, next, stopReasons } = await this.pullRaw(() => this.client.exec("line_start", { line_id: this.lineId }));
-        const { content, text } = packTokens(tokens.slice(prefixSize));
-        return { content, tokens: tokens.slice(prefixSize), text, entropy, next, stopReasons } as PullResult;
+        const { content, text } = packTokens(tokens.slice(pushedLength));
+        return { content, tokens: tokens.slice(pushedLength), text, entropy, next, stopReasons } as PullResult;
     }
     public async push(...content: ContentElem[]) {
         const clearContent: { special: boolean, chunk: string | number[] }[] = [];
@@ -761,6 +763,7 @@ export class ClientLine {
         }))).flat();
         await this.client.exec('line_push', { line_id: this.lineId, tokens });
         this.unparsedTokens.push(...tokens);
+        this.pushedLength += tokens.length;
         return tokens.length;
     }
     public async cancel() {
