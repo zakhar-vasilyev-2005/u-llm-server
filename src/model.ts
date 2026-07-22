@@ -249,16 +249,14 @@ class Instance implements API {
     public start(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         while (Object.keys(params.line_params).length !== 0) {
-            Object.values(params.line_params).forEach(e => {
-                if (e.max_tokens !== undefined) {
-                    e.max_tokens--;
-                }
-            })
             params.line_params = Object.fromEntries(Object.entries(params.line_params).flatMap(([lineId, p]) => {
                 return p.max_tokens !== undefined && p.max_tokens <= 0 ? [] : [[lineId, p]];
             }));
             const generated = this.step(params);
             if (generated === null) { break; }
+            Object.values(params.line_params).forEach(e => {
+                e.max_tokens = e.max_tokens === undefined ? undefined : e.max_tokens - 1;
+            })
             params.line_params = Object.fromEntries(generated.flatMap(e => {
                 const p = params.line_params[e.lineId];
                 return p !== undefined && !e.stop ? [[e.lineId, p]] : [];
