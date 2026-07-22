@@ -254,8 +254,11 @@ class Instance implements API {
             }));
             const generated = this.step(params);
             if (generated === null) { break; }
-            Object.values(params.line_params).forEach(e => {
-                e.max_tokens = e.max_tokens === undefined ? undefined : e.max_tokens - 1;
+            generated.forEach(e => {
+                const p = params.line_params[e.lineId];
+                if (e.token !== null && p?.max_tokens !== undefined) {
+                    p.max_tokens--;
+                }
             })
             params.line_params = Object.fromEntries(generated.flatMap(e => {
                 const p = params.line_params[e.lineId];
