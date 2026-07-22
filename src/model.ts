@@ -335,7 +335,7 @@ class Instance implements API {
             let token: number | null = null;
             if (seqData.logitIndex !== null && seqData.line.samplerPtr !== null) {
                 const logits = this.llama.get_logits_ith(this.contextPtr as bigint, this.vocabSize, seqData.logitIndex);
-                const entropy = this.entropy.entropyOfLogits(logits);
+                entropy = this.entropy.entropyOfLogits(logits);
                 const cur_p = this.samplinghelper.logitsToCurp(logits);
                 this.llama.sampler_apply(seqData.line.samplerPtr, cur_p);
                 token = this.samplinghelper.curpToToken(cur_p);
