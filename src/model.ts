@@ -369,7 +369,10 @@ class Instance implements API {
                     stopReasons.push("max_tokens");
                 }
             }
-            return { lineId, token, entropy, input, replace: trimmedLines.some(e => e === lineId), stop: stopReasons.length > 0, stopReasons } as Generated;
+            if (trimmedLines.some(e => e === lineId)) {
+                input.shift();
+            }
+            return { lineId, token, entropy, input, replace: false, stop: stopReasons.length > 0, stopReasons } as Generated;
         });
         return generated;
     }
