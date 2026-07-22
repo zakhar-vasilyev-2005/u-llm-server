@@ -451,34 +451,39 @@ export type ModelClientEvents = ModelEventsRaw & {
     raw_message: [SMessage],
     client_close: [],
 };
+export interface ModelClientParams {
+    conn: { unix: string } | { host?: string, port: number },
+    timeout?: number,
+    fallbackStartServer?: undefined | {
+        modelFile: string,
+        modelParams: ModelParamsSerialized,
+        stdout?: number | IOType | Stream | null,
+        stderr?: number | IOType | Stream | null,
+        timeout?: number
+    }
+};
 export class ModelClient extends EventEmitter<ModelClientEvents> {
-    public static async create(params: {
-        conn: { unix: string } | { host?: string, port: number },
-        timeout?: number,
-        fallbackStartServer?: undefined | {
-            modelFile: string,
-            modelParams: ModelParamsSerialized,
-            stdout?: number | IOType | Stream | null,
-            stderr?: number | IOType | Stream | null,
-            timeout?: number
-        }
-    }) {
-        const { conn, timeout: baseTimeout, fallbackStartServer } = params;
+    public static async create(params: ModelClientParams) {
+        let { conn, timeout: connectTimeout, fallbackStartServer } = params;;
+        connectTimeout ??= 500;
         let client: ModelClient;
         try {
-            client = await ModelClient.connect(conn, baseTimeout ?? 500);
+            client = await ModelClient.connect(conn, connectTimeout);
         } catch (e) {
             if (fallbackStartServer === undefined) {
                 throw new Error(`server not available`);
             }
-            const { modelFile, modelParams, stdout, stderr, timeout } = fallbackStartServer;
+            let { modelFile, modelParams, stdout, stderr, timeout: startTimeout } = fallbackStartServer;
+            stderr ??= "inherit";
+            stdout ??= null;
+            startTimeout ??= 0;
             const serverProc = fork(
                 path.join(import.meta.dirname, "start-server.js"),
                 [modelFile, JSON.stringify(conn), JSON.stringify(modelParams)],
-                { detached: true, stdio: [null, stdout ?? null, stderr ?? "inherit", "ipc"] }
+                { detached: true, stdio: [null, stdout, stderr, "ipc"] }
             );
             try {
-                client = await ModelClient.connect(conn, Math.max(0, (timeout ?? 0) - (baseTimeout ?? 500)));
+                client = await ModelClient.connect(conn, Math.max(0, startTimeout));
             } catch (e) {
                 serverProc.kill("SIGKILL");
                 throw Object.assign(new Error(`cannot start server in given timeout`), { reason: e });
