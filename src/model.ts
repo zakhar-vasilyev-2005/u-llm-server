@@ -10,13 +10,13 @@ export type API = {
     init: () => bigint | null,
     set_context: (cparams: ContextParams) => void,
     get_n_seq_max: () => number,
-    line_set_sampler: (lineId: number, sampler: SamplerConstructor) => void,
-    line_get_tokens: (lineId: number) => number[],
-    line_get_state: (lineId: number) => { data: Buffer, tokens: number[] },
-    line_set_state: (lineId: number, state: { data: Buffer, tokens: number[] } | null) => void,
-    line_save_state: (lineId: number, file: string) => void,
-    line_load_state: (lineId: number, file: string) => void,
-    line_cancel_input: (lineId: number) => void,
+    set_sampler: (lineId: number, sampler: SamplerConstructor) => void,
+    get_tokens: (lineId: number) => number[],
+    get_state: (lineId: number) => { data: Buffer, tokens: number[] },
+    set_state: (lineId: number, state: { data: Buffer, tokens: number[] } | null) => void,
+    save_state: (lineId: number, file: string) => void,
+    load_state: (lineId: number, file: string) => void,
+    cancel_input: (lineId: number) => void,
     trim: (lineId: number, nTokens: number) => void,
     push: (lineId: number, content: string | number[], parseSpecial?: boolean) => void,
     start: (params: InferenceParams) => void,
@@ -55,7 +55,6 @@ export type Generated = (
         input: number[],
         stop: boolean,
         stopReasons: StopReason[],
-        replace: boolean,
     } & ({
         token: number,
         entropy: number,
@@ -172,7 +171,7 @@ class Instance implements API {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         return this.llama.n_seq_max(this.contextPtr);
     }
-    public line_set_sampler(lineId: number, sampler: SamplerConstructor) {
+    public set_sampler(lineId: number, sampler: SamplerConstructor) {
         if (this.modelPtr === null) { throw new Error(`model isn't loaded`); }
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
@@ -185,44 +184,44 @@ class Instance implements API {
             this.llama.sampler_accept(line.samplerPtr, token);
         }
     }
-    public line_get_tokens(lineId: number) {
+    public get_tokens(lineId: number) {
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
         return line.tokens;
     }
-    public line_get_state(lineId: number) {
+    public get_state(lineId: number) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
         return { data: this.llama.state_seq_get(this.contextPtr, lineId), tokens: line.tokens };
     }
-    public line_set_state(lineId: number, state: { data: Buffer, tokens: number[] } | null) {
+    public set_state(lineId: number, state: { data: Buffer, tokens: number[] } | null) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
         state = state ?? { data: line.zeroState, tokens: [] };
-        this.line_cancel_input(lineId);
+        this.cancel_input(lineId);
         line.tokens = state.tokens;
         this.llama.state_seq_set(this.contextPtr, lineId, state.data);
-        this.line_set_sampler(lineId, line.sampler);
-        emit("tokens", [{ lineId, input: line.tokens, entropy: null, token: null, replace: false, stop: true, stopReasons: [] }]);
+        this.set_sampler(lineId, line.sampler);
+        emit("tokens", [{ lineId, input: line.tokens, entropy: null, token: null, stop: true, stopReasons: [] }]);
     }
-    public line_save_state(lineId: number, file: string) {
+    public save_state(lineId: number, file: string) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
         this.llama.state_seq_save_file(this.contextPtr, lineId, line.tokens, file);
     }
-    public line_load_state(lineId: number, file: string) {
+    public load_state(lineId: number, file: string) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
-        this.line_cancel_input(lineId);
+        this.cancel_input(lineId);
         line.tokens = [...this.llama.state_seq_load_file(this.contextPtr, lineId, file)];
-        this.line_set_sampler(lineId, line.sampler);
-        emit("tokens", [{ lineId, input: line.tokens, entropy: null, token: null, replace: false, stop: true, stopReasons: [] }]);
+        this.set_sampler(lineId, line.sampler);
+        emit("tokens", [{ lineId, input: line.tokens, entropy: null, token: null, stop: true, stopReasons: [] }]);
     }
-    public line_cancel_input(lineId: number) {
+    public cancel_input(lineId: number) {
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
         line.input = [];
@@ -266,7 +265,7 @@ class Instance implements API {
             if (generated === null) { break; }
             generated.forEach(e => {
                 const p = params.line_params[e.lineId];
-                if (e.token !== null && !e.replace && p?.max_tokens !== undefined) {
+                if (e.token !== null && p?.max_tokens !== undefined) {
                     p.max_tokens--;
                 }
             })
@@ -298,6 +297,7 @@ class Instance implements API {
             while (true) {
                 if (line.tokens.length >= 1 && (forceRegenerate.some(e => e === line.lineId) || line.input.length === 0)) {
                     trimmedLines.push(line.lineId);
+                    this.cancel_input(line.lineId);
                     const token = line.tokens.at(-1) as number;
                     this.trim(line.lineId, 1);
                     this.push(line.lineId, [token]);
@@ -409,13 +409,13 @@ if (parentPort !== null) {
         exit: () => instance.exit(),
         set_context: (cparams) => instance.set_context(cparams),
         get_n_seq_max: () => instance.get_n_seq_max(),
-        line_set_sampler: (ln, s) => instance.line_set_sampler(ln, s),
-        line_get_tokens: (ln) => instance.line_get_tokens(ln),
-        line_get_state: (ln) => instance.line_get_state(ln),
-        line_set_state: (ln, st) => instance.line_set_state(ln, st),
-        line_save_state: (ln, file) => instance.line_save_state(ln, file),
-        line_load_state: (ln, file) => instance.line_load_state(ln, file),
-        line_cancel_input: (ln) => instance.line_cancel_input(ln),
+        set_sampler: (ln, s) => instance.set_sampler(ln, s),
+        get_tokens: (ln) => instance.get_tokens(ln),
+        get_state: (ln) => instance.get_state(ln),
+        set_state: (ln, st) => instance.set_state(ln, st),
+        save_state: (ln, file) => instance.save_state(ln, file),
+        load_state: (ln, file) => instance.load_state(ln, file),
+        cancel_input: (ln) => instance.cancel_input(ln),
         trim: (ln, n) => instance.trim(ln, n),
         push: (ln, c, sp) => instance.push(ln, c, sp),
         start: (p) => instance.start(p),

@@ -72,7 +72,6 @@ export type TokenGenerated = {
     next: TokenData | null,
     input: TokenData[],
     entropy: number,
-    replace: boolean,
     stop: boolean,
     stopReasons: StopReason[],
 };
@@ -196,14 +195,11 @@ export class Model extends EventEmitter<ModelEvents> {
                 const temp = line.buffer.copy();
                 const next = e.token === null ? null : tokenToPiece(line, e.token);
                 line.buffer.replaceWith(temp);
-                const { entropy, replace, stop, stopReasons } = e;
-                return { line, next, input, entropy, replace, stop, stopReasons } as TokenGenerated;
+                const { entropy, stop, stopReasons } = e;
+                return { line, next, input, entropy, stop, stopReasons } as TokenGenerated;
             });
             this.emit("tokens", tokens);
             tokens.forEach(e => {
-                if (e.replace) {
-                    e.line.content.pop();
-                }
                 e.line.content.push(...e.input);
                 e.line.emit("token", e);
             })
@@ -260,10 +256,10 @@ export class ModelLine extends EventEmitter<LineEvents> {
         await this.model.worker.api.push(this.index, input, parseSpecial);
     }
     public async cancelInput() {
-        await this.model.worker.api.line_cancel_input(this.index);
+        await this.model.worker.api.cancel_input(this.index);
     }
     public async setSampler(sampler: SamplerConstructor) {
-        await this.model.worker.api.line_set_sampler(this.index, sampler);
+        await this.model.worker.api.set_sampler(this.index, sampler);
     }
     public async trim(nTokens: number) {
         await this.model.worker.api.trim(this.index, nTokens);
@@ -282,19 +278,19 @@ export class ModelLine extends EventEmitter<LineEvents> {
         }
     }
     public async setState(state: { data: Buffer, tokens: number[] } | null) {
-        await this.model.worker.api.line_set_state(this.index, state);
+        await this.model.worker.api.set_state(this.index, state);
     }
     public async getState(): Promise<{ data: Buffer, tokens: number[] }> {
-        return await this.model.worker.api.line_get_state(this.index);
+        return await this.model.worker.api.get_state(this.index);
     }
     public async getTokens(): Promise<number[]> {
-        return await this.model.worker.api.line_get_tokens(this.index);
+        return await this.model.worker.api.get_tokens(this.index);
     }
     public async clearState() {
-        await this.model.worker.api.line_set_state(this.index, null);
+        await this.model.worker.api.set_state(this.index, null);
     }
     public async loadState(file: string) {
-        await this.model.worker.api.line_load_state(this.index, file);
+        await this.model.worker.api.load_state(this.index, file);
     }
     public async saveState(file: string | undefined) {
         if (file === undefined) {
@@ -303,7 +299,7 @@ export class ModelLine extends EventEmitter<LineEvents> {
         if (file === undefined) {
             throw new Error(`cannot create temporary file name`);
         }
-        await this.model.worker.api.line_save_state(this.index, file);
+        await this.model.worker.api.save_state(this.index, file);
         return file;
     }
     public enabled: boolean = false;

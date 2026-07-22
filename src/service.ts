@@ -394,12 +394,12 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
                             piece: e.piece,
                             control: e.control,
                         }))
-                        const { entropy, replace, stop, stopReasons } = tokens;
+                        const { entropy, stop, stopReasons } = tokens;
                         this.send(null, {
                             type: "event",
                             object: {
                                 event: "tokens",
-                                args: { line_id, next, input, entropy, replace, stop, stopReasons }
+                                args: { line_id, next, input, entropy, stop, stopReasons }
                             }
                         });
                     });
@@ -696,13 +696,6 @@ export class ClientLine {
             const handler = (e: TokensEvent) => {
                 if (e.line_id !== this.lineId) { return; }
                 events.push(e);
-                if (e.replace) {
-                    if (tokens.length) {
-                        tokens.pop();
-                    } else {
-                        replace = true;
-                    }
-                }
                 tokens.push(...e.input);
                 if (stopCond(events)) {
                     this.client.off("tokens", handler);

@@ -22,7 +22,6 @@ export const SEventArgs = {
         next: z.union([z.null(), SToken]),
         input: z.array(SToken),
         entropy: z.union([z.null(), z.number().nonnegative()]),
-        replace: z.boolean(),
         stop: z.boolean(),
         stopReasons: z.array(StopReasonsSchema),
     }),
