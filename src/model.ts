@@ -254,17 +254,15 @@ class Instance implements API {
                     e.max_tokens--;
                 }
             })
+            params.line_params = Object.fromEntries(Object.entries(params.line_params).flatMap(([lineId, p]) => {
+                return p.max_tokens !== undefined && p.max_tokens <= 0 ? [] : [[lineId, p]];
+            }));
             const generated = this.step(params);
             if (generated === null) { break; }
-            const newLineParams: typeof params.line_params = {};
-            generated.forEach(e => {
+            params.line_params = Object.fromEntries(generated.flatMap(e => {
                 const p = params.line_params[e.lineId];
-                if (p === undefined || e.stop || (p?.max_tokens !== undefined && p.max_tokens <= 0)) {
-                    return;
-                }
-                newLineParams[e.lineId] = p;
-            });
-            params.line_params = newLineParams;
+                return p !== undefined && !e.stop ? [[e.lineId, p]] : [];
+            }));
             emit("tokens", generated);
             if (this.stopFlag.get() || generated.every(e => e.stop)) { break; }
         }
@@ -287,15 +285,15 @@ class Instance implements API {
             }
             let input: number[];
             while (true) {
-                input = line.input.slice(0, params.batch_size_per_line);
-                line.input = line.input.slice(params.batch_size_per_line);
-                if (input.length === 0 && line.tokens.length >= 1) {
+                if (line.input.length === 0 && line.tokens.length >= 1) {
                     trimmedLines.push(line.lineId);
                     const token = line.tokens.at(-1) as number;
                     this.trim(line.lineId, 1);
                     this.push(line.lineId, [token]);
                     continue;
                 } else {
+                    input = line.input.slice(0, params.batch_size_per_line);
+                    line.input = line.input.slice(params.batch_size_per_line);
                     break;
                 }
             }
@@ -356,7 +354,7 @@ class Instance implements API {
                 if ((lineConfig.eog_stop ?? false) && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
                     stopReasons.push("eog_stop");
                 }
-                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 0) {
+                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 1) {
                     stopReasons.push("max_tokens");
                 }
                 return { lineId, token, entropy, input, replace: trimmedLines.some(e => e === lineId), stop: stopReasons.length > 0, stopReasons } as Generated;
