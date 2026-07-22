@@ -331,32 +331,30 @@ class Instance implements API {
             const { lineId } = seqData.line;
             const { input, lineConfig } = seqData;
             (this.lines[lineId] as LineData).tokens.push(...input);
-            if (seqData.logitIndex === null) {
-                return { lineId, token: null, entropy: null, input, replace: false, stop: false, stopReasons: [] } as Generated;
-            } else if (seqData.line.samplerPtr === null) {
-                return { lineId, token: null, entropy: null, input, replace: false, stop: true, stopReasons: [] } as Generated;
-            } else {
+            let entropy = 0;
+            let token: number | null = null;
+            if (seqData.logitIndex !== null && seqData.line.samplerPtr !== null) {
                 const logits = this.llama.get_logits_ith(this.contextPtr as bigint, this.vocabSize, seqData.logitIndex);
                 const entropy = this.entropy.entropyOfLogits(logits);
                 const cur_p = this.samplinghelper.logitsToCurp(logits);
                 this.llama.sampler_apply(seqData.line.samplerPtr, cur_p);
-                const token = this.samplinghelper.curpToToken(cur_p);
+                token = this.samplinghelper.curpToToken(cur_p);
                 this.push(lineId, [token]);
-                const stopReasons: StopReason[] = [];
-                if (entropy < (lineConfig.min_entropy ?? 0)) {
-                    stopReasons.push("min_entropy");
-                }
-                if (entropy > (lineConfig.max_entropy ?? Number.POSITIVE_INFINITY)) {
-                    stopReasons.push("max_entropy");
-                }
-                if ((lineConfig.eog_stop ?? false) && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
-                    stopReasons.push("eog_stop");
-                }
-                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 1) {
-                    stopReasons.push("max_tokens");
-                }
-                return { lineId, token, entropy, input, replace: trimmedLines.some(e => e === lineId), stop: stopReasons.length > 0, stopReasons } as Generated;
             }
+            const stopReasons: StopReason[] = [];
+            if (entropy < (lineConfig.min_entropy ?? 0)) {
+                stopReasons.push("min_entropy");
+            }
+            if (entropy > (lineConfig.max_entropy ?? Number.POSITIVE_INFINITY)) {
+                stopReasons.push("max_entropy");
+            }
+            if ((lineConfig.eog_stop ?? false) && token !== null && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
+                stopReasons.push("eog_stop");
+            }
+            if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 1) {
+                stopReasons.push("max_tokens");
+            }
+            return { lineId, token, entropy, input, replace: trimmedLines.some(e => e === lineId), stop: stopReasons.length > 0, stopReasons } as Generated;
         });
         return generated;
     }
