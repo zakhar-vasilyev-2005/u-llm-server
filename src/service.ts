@@ -595,15 +595,17 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         const query_id = ModelClient.rng.uuid();
         const pkg = { command, query_id, args } as SCommand;
         return await new Promise<z.output<typeof SResultArgs[Command]>>((resolve, reject) => {
-            this.on("raw_message", msg => {
+            const handler = (msg: SMessage) => {
                 if ("query_id" in msg && msg.query_id === query_id) {
+                    this.off("raw_message", handler);
                     if (msg.type === "error") {
                         reject(Object.assign(new Error(msg.object.error), msg.object.args));
                     } else {
                         resolve(msg.object.args as any);
                     }
                 }
-            });
+            };
+            this.on("raw_message", handler);
             this.socket.write(JSON.stringify(pkg) + "\n");
         });
     }
