@@ -252,8 +252,12 @@ class Instance implements API {
             const forceRegenerate: number[] = [];
             params.line_params = Object.fromEntries(Object.entries(params.line_params).flatMap(([lineId, p]) => {
                 if (p.max_tokens !== undefined && p.max_tokens <= 0) {
-                    forceRegenerate.push(parseInt(lineId));
-                    return [];
+                    if (p.max_tokens < 0) {
+                        return [];
+                    } else {
+                        forceRegenerate.push(parseInt(lineId));
+                        return [[lineId, p]];
+                    }
                 } else {
                     return [[lineId, p]];
                 }
