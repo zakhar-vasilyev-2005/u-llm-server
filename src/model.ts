@@ -248,20 +248,14 @@ class Instance implements API {
     public start(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         while (Object.keys(params.line_params).length !== 0) {
-            const forceRegenerate: number[] = [];
             params.line_params = Object.fromEntries(Object.entries(params.line_params).flatMap(([lineId, p]) => {
-                if (p.max_tokens !== undefined && p.max_tokens <= 0) {
-                    if (p.max_tokens < 0) {
-                        return [];
-                    } else {
-                        forceRegenerate.push(parseInt(lineId));
-                        return [[lineId, p]];
-                    }
+                if (p.max_tokens !== undefined && p.max_tokens < 0) {
+                    return [];
                 } else {
                     return [[lineId, p]];
                 }
             }));
-            const generated = this.step(params, forceRegenerate);
+            const generated = this.step(params);
             if (generated === null) { break; }
             generated.forEach(e => {
                 const p = params.line_params[e.lineId];
@@ -277,7 +271,7 @@ class Instance implements API {
             if (this.stopFlag.get() || generated.every(e => e.stop)) { break; }
         }
     }
-    public step(params: InferenceParams, forceRegenerate: number[] = []) {
+    public step(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         const trimmedLines: number[] = [];
         let batchTokens = 0;
@@ -295,9 +289,8 @@ class Instance implements API {
             }
             let input: number[];
             while (true) {
-                if (line.tokens.length >= 1 && (forceRegenerate.some(e => e === line.lineId) || line.input.length === 0)) {
+                if (line.tokens.length >= 1 && line.input.length === 0) {
                     trimmedLines.push(line.lineId);
-                    this.cancel_input(line.lineId);
                     const token = line.tokens.at(-1) as number;
                     this.trim(line.lineId, 1);
                     this.push(line.lineId, [token]);
