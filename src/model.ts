@@ -330,6 +330,7 @@ class Instance implements API {
         const generated = batchData.map(seqData => {
             const { lineId } = seqData.line;
             const { input, lineConfig } = seqData;
+            (this.lines[lineId] as LineData).tokens.push(...input);
             if (seqData.logitIndex === null) {
                 return { lineId, token: null, entropy: null, input, replace: false, stop: false, stopReasons: [] } as Generated;
             } else if (seqData.line.samplerPtr === null) {
@@ -340,7 +341,6 @@ class Instance implements API {
                 const cur_p = this.samplinghelper.logitsToCurp(logits);
                 this.llama.sampler_apply(seqData.line.samplerPtr, cur_p);
                 const token = this.samplinghelper.curpToToken(cur_p);
-                (this.lines[lineId] as LineData).tokens.push(...input);
                 this.push(lineId, [token]);
                 const stopReasons: StopReason[] = [];
                 if (entropy < (lineConfig.min_entropy ?? 0)) {

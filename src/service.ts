@@ -782,7 +782,6 @@ export class ClientLine {
     }
     public async clear() {
         await this.client.exec("line_clear", { line_id: this.lineId });
-        await this.cancel();
         this.tokens = [];
         this.unparsedTokens = [];
     }
