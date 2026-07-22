@@ -12,6 +12,8 @@ import { createFreeEvent } from "./event-util.js";
 import { extractMiddle } from "./extract-middle.js";
 import type { InferenceLineParams, StopReason } from "./model.js";
 import { Template } from "@huggingface/jinja";
+import { fork, type IOType } from "child_process";
+import type Stream from "stream";
 
 
 
@@ -450,6 +452,40 @@ export type ModelClientEvents = ModelEventsRaw & {
     client_close: [],
 };
 export class ModelClient extends EventEmitter<ModelClientEvents> {
+    public static async create(params: {
+        conn: { unix: string } | { host?: string, port: number },
+        timeout?: number,
+        fallbackStartServer?: undefined | {
+            modelFile: string,
+            modelParams: ModelParamsSerialized,
+            stdout?: number | IOType | Stream | null,
+            stderr?: number | IOType | Stream | null,
+            timeout?: number
+        }
+    }) {
+        const { conn, timeout: baseTimeout, fallbackStartServer } = params;
+        let client: ModelClient;
+        try {
+            client = await ModelClient.connect(conn, baseTimeout ?? 500);
+        } catch (e) {
+            if (fallbackStartServer === undefined) {
+                throw new Error(`server not available`);
+            }
+            const { modelFile, modelParams, stdout, stderr, timeout } = fallbackStartServer;
+            const serverProc = fork(
+                path.join(import.meta.dirname, "start-server.js"),
+                [modelFile, JSON.stringify(conn), JSON.stringify(modelParams)],
+                { detached: true, stdio: [null, stdout ?? null, stderr ?? "inherit", "ipc"] }
+            );
+            try {
+                client = await ModelClient.connect(conn, Math.max(0, (timeout ?? 0) - (baseTimeout ?? 500)));
+            } catch (e) {
+                serverProc.kill("SIGKILL");
+                throw Object.assign(new Error(`cannot start server in given timeout`), { reason: e });
+            }
+        }
+        return client;
+    }
     public static async connect(conn: ConnOption, timeout: number = 0): Promise<ModelClient> {
         if (timeout <= 0) {
             const params = ("unix" in conn ? { path: conn.unix } : { port: conn.port, host: conn.host ?? "localhost" }) as NetConnectOpts;
@@ -631,7 +667,7 @@ export class ClientLine {
     public async loadContent(file: string) {
         await this.cancel();
         this.tokens = []
-        await this.pullRaw({}, () => this.client.exec("line_load", { line_id: this.lineId, path: file }));
+        await this.pullRaw(() => this.client.exec("line_load", { line_id: this.lineId, path: file }));
     }
     public async saveContent(file: string) {
         await this.client.exec("line_save", { line_id: this.lineId, path: file });
@@ -651,11 +687,7 @@ export class ClientLine {
     }
     public tokens: Token[] = [];
     public unparsedTokens: number[] = [];
-    public async pullRaw(stop: StopCondition, action: () => void, stopCond: (events: TokensEvent[]) => boolean = e => !!e.at(-1)?.stop) {
-        await this.client.exec("line_init", {
-            line_id: this.lineId,
-            inference: stop,
-        });
+    public async pullRaw(action: () => void, stopCond: (events: TokensEvent[]) => boolean = e => !!e.at(-1)?.stop) {
         const { last, replace, tokens } = await new Promise<{ tokens: Token[], replace: boolean, last: TokensEvent }>(async resolve => {
             let tokens: Token[] = [];
             let replace = false;
@@ -689,7 +721,8 @@ export class ClientLine {
     }
     public async pull(stop: StopCondition) {
         const prefixSize = this.unparsedTokens.length;
-        const { tokens, entropy, next, stopReasons } = await this.pullRaw(stop, () => this.client.exec("line_start", { line_id: this.lineId }));
+        await this.client.exec("line_init", { line_id: this.lineId, inference: stop });
+        const { tokens, entropy, next, stopReasons } = await this.pullRaw(() => this.client.exec("line_start", { line_id: this.lineId }));
         const { content, text } = packTokens(tokens.slice(prefixSize));
         return { content, tokens: tokens.slice(prefixSize), text, entropy, next, stopReasons };
     }
