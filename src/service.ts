@@ -663,6 +663,7 @@ export type TemplateInput = {
 };
 
 
+export type PullResult = ReturnType<typeof packTokens> & TokenSequence;
 export class ClientLine {
     public async loadContent(file: string) {
         await this.cancel();
@@ -724,7 +725,7 @@ export class ClientLine {
         await this.client.exec("line_init", { line_id: this.lineId, inference: stop });
         const { tokens, entropy, next, stopReasons } = await this.pullRaw(() => this.client.exec("line_start", { line_id: this.lineId }));
         const { content, text } = packTokens(tokens.slice(prefixSize));
-        return { content, tokens: tokens.slice(prefixSize), text, entropy, next, stopReasons };
+        return { content, tokens: tokens.slice(prefixSize), text, entropy, next, stopReasons } as PullResult;
     }
     public async push(...content: ContentElem[]) {
         const clearContent: { special: boolean, chunk: string | number[] }[] = [];
