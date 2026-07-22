@@ -249,14 +249,20 @@ class Instance implements API {
     public start(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         while (Object.keys(params.line_params).length !== 0) {
+            const forceRegenerate: number[] = [];
             params.line_params = Object.fromEntries(Object.entries(params.line_params).flatMap(([lineId, p]) => {
-                return p.max_tokens !== undefined && p.max_tokens <= 0 ? [] : [[lineId, p]];
+                if (p.max_tokens !== undefined && p.max_tokens <= 0) {
+                    forceRegenerate.push(parseInt(lineId));
+                    return [];
+                } else {
+                    return [[lineId, p]];
+                }
             }));
-            const generated = this.step(params);
+            const generated = this.step(params, forceRegenerate);
             if (generated === null) { break; }
             generated.forEach(e => {
                 const p = params.line_params[e.lineId];
-                if (e.token !== null && p?.max_tokens !== undefined) {
+                if (e.token !== null && !e.replace && p?.max_tokens !== undefined) {
                     p.max_tokens--;
                 }
             })
@@ -268,7 +274,7 @@ class Instance implements API {
             if (this.stopFlag.get() || generated.every(e => e.stop)) { break; }
         }
     }
-    public step(params: InferenceParams) {
+    public step(params: InferenceParams, forceRegenerate: number[] = []) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         const trimmedLines: number[] = [];
         let batchTokens = 0;
@@ -286,7 +292,7 @@ class Instance implements API {
             }
             let input: number[];
             while (true) {
-                if (line.input.length === 0 && line.tokens.length >= 1) {
+                if (line.tokens.length >= 1 && (forceRegenerate.some(e => e === line.lineId) || line.input.length === 0)) {
                     trimmedLines.push(line.lineId);
                     const token = line.tokens.at(-1) as number;
                     this.trim(line.lineId, 1);
@@ -345,17 +351,19 @@ class Instance implements API {
                 this.push(lineId, [token]);
             }
             const stopReasons: StopReason[] = [];
-            if (entropy < (lineConfig.min_entropy ?? 0)) {
-                stopReasons.push("min_entropy");
-            }
-            if (entropy > (lineConfig.max_entropy ?? Number.POSITIVE_INFINITY)) {
-                stopReasons.push("max_entropy");
-            }
-            if ((lineConfig.eog_stop ?? false) && token !== null && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
-                stopReasons.push("eog_stop");
-            }
-            if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 1) {
-                stopReasons.push("max_tokens");
+            if (token !== null) {
+                if (entropy < (lineConfig.min_entropy ?? 0)) {
+                    stopReasons.push("min_entropy");
+                }
+                if (entropy > (lineConfig.max_entropy ?? Number.POSITIVE_INFINITY)) {
+                    stopReasons.push("max_entropy");
+                }
+                if ((lineConfig.eog_stop ?? false) && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
+                    stopReasons.push("eog_stop");
+                }
+                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 1) {
+                    stopReasons.push("max_tokens");
+                }
             }
             return { lineId, token, entropy, input, replace: trimmedLines.some(e => e === lineId), stop: stopReasons.length > 0, stopReasons } as Generated;
         });
