@@ -189,7 +189,7 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
                 }
             }
             const line_id = args.line_id ?? newLineId();
-            let line = this.activeLines[line_id];
+            let line: ModelLine | undefined = this.activeLines[line_id];
             if (line === undefined) {
                 line = this.freeLines.pop();
                 if (line === undefined) {
@@ -753,7 +753,7 @@ export class ClientLine {
         });
         const tokens = (await Promise.all(clearContent.map(async e => {
             if (typeof e.chunk === "string") {
-                return (await this.client.exec("tokenize", { text: e.chunk, parse_special: e.special })).tokens;
+                return (await this.client.exec("tokenize", { text: e.chunk.replace("\t", "    "), parse_special: e.special })).tokens;
             } else {
                 return e.chunk;
             }
@@ -785,7 +785,6 @@ export class ClientLine {
         await this.client.exec("line_free", { line_id: this.lineId });
     }
 }
-
 
 
 

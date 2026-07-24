@@ -47,6 +47,7 @@ export type LineData = {
     input: number[],
     sampler: SamplerConstructor,
     samplerPtr: null | bigint,
+    samplerOffset: number,
     zeroState: Buffer,
 };
 export type Generated = (
@@ -163,6 +164,7 @@ class Instance implements API {
             input: [],
             sampler: [],
             samplerPtr: null,
+            samplerOffset: 0,
             zeroState: this.llama.state_seq_get(this.contextPtr as bigint, i)
         }));
     }
@@ -171,16 +173,17 @@ class Instance implements API {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
         return this.llama.n_seq_max(this.contextPtr);
     }
-    public set_sampler(lineId: number, sampler: SamplerConstructor) {
+    public set_sampler(lineId: number, sampler: SamplerConstructor, offset: number = 0) {
         if (this.modelPtr === null) { throw new Error(`model isn't loaded`); }
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
+        line.samplerOffset = offset;
         if (line.samplerPtr !== null) {
             this.llama.sampler_free(line.samplerPtr);
         }
         line.sampler = sampler;
         line.samplerPtr = this.llama.sampler_chain(this.modelPtr, sampler);
-        for (const token of line.tokens) {
+        for (const token of line.tokens.slice(offset)) {
             this.llama.sampler_accept(line.samplerPtr, token);
         }
     }
@@ -244,6 +247,7 @@ class Instance implements API {
         } else {
             line.input.push(...content);
         }
+        // add recompression of line.input.slice(-5) tokens
     }
     public start(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
@@ -334,16 +338,16 @@ class Instance implements API {
         const code = this.llama.decode(this.contextPtr, batch);
         if (code !== 0) { throw new Error(`llama_decode error code ${code}`); }
         const generated = batchData.map(seqData => {
-            const { lineId } = seqData.line;
+            const { lineId, samplerPtr } = seqData.line;
             const { input, lineConfig } = seqData;
             (this.lines[lineId] as LineData).tokens.push(...input);
             let entropy = 0;
             let token: number | null = null;
-            if (seqData.logitIndex !== null && seqData.line.samplerPtr !== null) {
+            if (seqData.logitIndex !== null && samplerPtr !== null) {
                 const logits = this.llama.get_logits_ith(this.contextPtr as bigint, this.vocabSize, seqData.logitIndex);
                 entropy = this.entropy.entropyOfLogits(logits);
                 const cur_p = this.samplinghelper.logitsToCurp(logits);
-                this.llama.sampler_apply(seqData.line.samplerPtr, cur_p);
+                this.llama.sampler_apply(samplerPtr, cur_p);
                 token = this.samplinghelper.curpToToken(cur_p);
                 this.push(lineId, [token]);
             }
@@ -364,6 +368,10 @@ class Instance implements API {
             }
             if (trimmedLines.some(e => e === lineId)) {
                 input.shift();
+            }
+            if (samplerPtr !== null) {
+                const offset = seqData.line.samplerOffset - seqData.line.tokens.length;
+                input.slice(Math.max(0, offset)).forEach(e => this.llama.sampler_accept(samplerPtr, e));
             }
             return { lineId, token, entropy, input, replace: false, stop: stopReasons.length > 0, stopReasons } as Generated;
         });
