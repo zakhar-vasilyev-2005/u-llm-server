@@ -200,7 +200,7 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
                 this.activeLines[line_id] = line;
             }
             if (args.sampler !== undefined) {
-                await line.setSampler(args.sampler);
+                await line.setSampler(args.sampler, args.sampler_offset ?? 0);
             }
             if (args.inference !== undefined) {
                 line.inferenceParams = args.inference;
@@ -689,8 +689,8 @@ export class ClientLine {
         await client.exec("line_cancel", { line_id: lineId });
         return new ClientLine(client, lineId);
     }
-    public async setSampler(sampler: SamplerConstructor) {
-        await this.client.exec("line_init", { line_id: this.lineId, sampler });
+    public async setSampler(sampler: SamplerConstructor, samplerOffset: number = 0) {
+        await this.client.exec("line_init", { line_id: this.lineId, sampler, sampler_offset: samplerOffset });
         this.sampler = sampler;
     }
     public tokens: Token[] = [];

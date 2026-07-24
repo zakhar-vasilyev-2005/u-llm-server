@@ -258,8 +258,8 @@ export class ModelLine extends EventEmitter<LineEvents> {
     public async cancelInput() {
         await this.model.worker.api.cancel_input(this.index);
     }
-    public async setSampler(sampler: SamplerConstructor) {
-        await this.model.worker.api.set_sampler(this.index, sampler);
+    public async setSampler(sampler: SamplerConstructor, samplerOffset: number = 0) {
+        await this.model.worker.api.set_sampler(this.index, sampler, samplerOffset);
     }
     public async trim(nTokens: number) {
         await this.model.worker.api.trim(this.index, nTokens);

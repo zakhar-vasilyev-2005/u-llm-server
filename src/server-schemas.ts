@@ -129,6 +129,7 @@ export const SCommandArgs = {
     line_init: z.object({
         line_id: z.string().optional(),
         sampler: SamplerConstructorScheme.optional(),
+        sampler_offset: z.int().nonnegative().optional(),
         inference: InferenceLineParamsScheme.optional(),
     }),
     line_free: z.object({
