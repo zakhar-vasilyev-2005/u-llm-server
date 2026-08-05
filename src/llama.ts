@@ -3,7 +3,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 import { createFreeEvent } from './event-util.js';
 import { Worker } from './worker.js';
-import type { API as modelAPI, Events as modelEvents, Args as modelArgs, InferenceParams, InferenceLineParams, StopReason } from './model.js';
+import type { API as modelAPI, Events as modelEvents, Args as modelArgs, InferenceParams, InferenceLineParams, StopReason, InputElem } from './model.js';
 import { AtomicFlag } from './atomic-flag.js';
 import { createGGMLLogger, LibEntropy, LibGGML, LibLlama, LibSamplingHelper, type ContextParams, type GGMLLogLevel, type ModelParams, type ModelParamsSerialized, type SamplerConstructor } from './llama-base.js';
 import { GrowBuffer } from './growbuffer.js';
@@ -65,7 +65,7 @@ export type TokenData = {
     token: number,
     piece: string,
     piece_raw: Buffer,
-    control: boolean,
+    special: boolean,
 };
 export type TokenGenerated = {
     line: ModelLine,
@@ -183,8 +183,8 @@ export class Model extends EventEmitter<ModelEvents> {
                     piece = raw;
                 }
             }
-            const control = token === null ? false : this.backend.llama.vocab_is_control(this.vocabPtr, token);
-            return { token, piece, piece_raw, control };
+            const special = token === null ? false : this.backend.llama.vocab_is_control(this.vocabPtr, token);
+            return { token, piece, piece_raw, special } as TokenData;
         }
         this.backend.llama.log_set((lv, m) => this.emit("llama_log", lv, m));
         this.worker.on("llama_log", (lv, m) => this.emit("llama_log", lv, m));
@@ -250,10 +250,8 @@ export class ModelLine extends EventEmitter<LineEvents> {
     public constructor(public readonly model: Model, public readonly index: number) {
         super();
     }
-    public async pushInput(input: number[]): Promise<void>;
-    public async pushInput(input: string, parseSpecial?: boolean): Promise<void>;
-    public async pushInput(input: number[] | string, parseSpecial: boolean = true) {
-        await this.model.worker.api.push(this.index, input, parseSpecial);
+    public async pushInput(input: InputElem[]) {
+        await this.model.worker.api.push(this.index, input);
     }
     public async cancelInput() {
         await this.model.worker.api.cancel_input(this.index);

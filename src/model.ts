@@ -18,7 +18,7 @@ export type API = {
     load_state: (lineId: number, file: string) => void,
     cancel_input: (lineId: number) => void,
     trim: (lineId: number, nTokens: number) => void,
-    push: (lineId: number, content: string | number[], parseSpecial?: boolean) => void,
+    push: (lineId: number, content: InputElem[]) => void,
     start: (params: InferenceParams) => void,
     step: (params: InferenceParams) => Generated[] | null,
     metadata: () => Record<string, string>,
@@ -41,10 +41,19 @@ export type Args = {
     stop_buffer: typeof AtomicFlag.prototype.shared,
 };
 
+export type InputElem = {
+    text: string,
+    special: boolean,
+    tokens?: never,
+} | {
+    text?: never,
+    special?: never,
+    tokens: number[],
+};
 export type LineData = {
     lineId: number,
     tokens: number[],
-    input: number[],
+    input: InputElem[],
     sampler: SamplerConstructor,
     samplerPtr: null | bigint,
     samplerOffset: number,
@@ -77,6 +86,7 @@ export type InferenceParams = {
     line_params: Record<number, InferenceLineParams>
     batch_size_per_line: number,
 }
+
 
 class Instance implements API {
     public readonly llama: LibLlama;
@@ -235,19 +245,20 @@ class Instance implements API {
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
         this.llama.state_seq_trim(this.contextPtr, lineId, nTokens);
         line.tokens = line.tokens.slice(0, line.tokens.length - nTokens);
+        this.set_sampler(lineId, line.sampler, line.samplerOffset);
     }
-    public push(lineId: number, content: string | number[], parseSpecial: boolean = true) {
+    public push(lineId: number, content: InputElem[]) {
         const line = this.lines[lineId];
         if (line === undefined) { throw new Error(`line #${lineId} not found`); }
-        if (typeof content === "string") {
-            if (this.vocabPtr === null) {
-                throw new Error(`model's vocab isn't initialized`);
+        for (const elem of content) {
+            const last = line.input.at(-1);
+            if (last?.special === elem.special && last?.text !== undefined) {
+                line.input.pop();
+                line.input.push({ text: last.text + elem.text, special: last.special });
+            } else {
+                line.input.push(elem);
             }
-            line.input.push(...this.llama.tokenize(this.vocabPtr, content, parseSpecial));
-        } else {
-            line.input.push(...content);
         }
-        // add recompression of line.input.slice(-5) tokens
     }
     public start(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
@@ -297,11 +308,19 @@ class Instance implements API {
                     trimmedLines.push(line.lineId);
                     const token = line.tokens.at(-1) as number;
                     this.trim(line.lineId, 1);
-                    this.push(line.lineId, [token]);
+                    this.push(line.lineId, [{ tokens: [token] }]);
                     continue;
                 } else {
-                    input = line.input.slice(0, params.batch_size_per_line);
-                    line.input = line.input.slice(params.batch_size_per_line);
+                    input = [];
+                    while (input.length < params.batch_size_per_line && line.input.length !== 0) {
+                        const raw = line.input.shift();
+                        if (this.vocabPtr === null) {
+                            throw new Error(`cannot use step() with no vocab initialized`);
+                        }
+                        const tokens = raw?.text === undefined ? (raw?.tokens ?? []) : this.llama.tokenize(this.vocabPtr, raw.text, raw.special)
+                        input.push(...tokens.slice(0, params.batch_size_per_line));
+                        line.input.unshift({ tokens: [...tokens.slice(params.batch_size_per_line)] })
+                    }
                     break;
                 }
             }
@@ -349,7 +368,7 @@ class Instance implements API {
                 const cur_p = this.samplinghelper.logitsToCurp(logits);
                 this.llama.sampler_apply(samplerPtr, cur_p);
                 token = this.samplinghelper.curpToToken(cur_p);
-                this.push(lineId, [token]);
+                this.push(lineId, [{ tokens: [token] }]);
             }
             const stopReasons: StopReason[] = [];
             if (token !== null) {
@@ -418,7 +437,7 @@ if (parentPort !== null) {
         load_state: (ln, file) => instance.load_state(ln, file),
         cancel_input: (ln) => instance.cancel_input(ln),
         trim: (ln, n) => instance.trim(ln, n),
-        push: (ln, c, sp) => instance.push(ln, c, sp),
+        push: (ln, c) => instance.push(ln, c),
         start: (p) => instance.start(p),
         step: (p) => instance.step(p),
         metadata: () => instance.metadata(),

@@ -10,7 +10,7 @@ import { sprintf } from "sprintf-js";
 import { Yurandom } from 'yurandom';
 import { createFreeEvent } from "./event-util.js";
 import { extractMiddle } from "./extract-middle.js";
-import type { InferenceLineParams, StopReason } from "./model.js";
+import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
 import { Template } from "@huggingface/jinja";
 import { fork, type IOType } from "child_process";
 import type Stream from "stream";
@@ -245,7 +245,7 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
                 const message = `Cannot find line with id ${JSON.stringify(args.line_id)}: no such id in the list.`;
                 return { error: "line_not_found", args: { message, fields: { line_id: args.line_id } } };
             }
-            await line.pushInput(args.tokens);
+            await line.pushInput(args.content);
             return { command: "line_push", args: null };
         });
         server.bind("line_trim", async args => {
@@ -387,12 +387,12 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
                         const next = tokens.next === null ? null : {
                             token: tokens.next.token,
                             piece: tokens.next.piece,
-                            control: tokens.next.control,
+                            special: tokens.next.special,
                         };
                         const input = tokens.input.map(e => ({
                             token: e.token,
                             piece: e.piece,
-                            control: e.control,
+                            special: e.special,
                         }))
                         const { entropy, stop, stopReasons } = tokens;
                         this.send(null, {
@@ -637,7 +637,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
 export function packTokens(tokens: Token[]) {
     const content: (number | string)[] = [];
     tokens.forEach(e => {
-        if (e.control) {
+        if (e.special) {
             content.push(e.token);
         } else {
             if (typeof content.at(-1) === "string") {
@@ -659,7 +659,7 @@ export type TokenSequence = {
     stopReasons: StopReason[]
 };
 export type StopCondition = InferenceLineParams;
-export type ContentElem = string | number | number[] | { special: boolean, text: string } | TemplateInput;
+export type ContentElem = string | number | number[] | InputElem | TemplateInput;
 export type TemplateInput = {
     messages: {
         role: "system" | "user" | "assistant" | "tool",
@@ -694,7 +694,7 @@ export class ClientLine {
         this.sampler = sampler;
     }
     public tokens: Token[] = [];
-    public unparsedTokens: number[] = [];
+    public unparsedContent: InputElem[] = [];
     public async pullRaw(action: () => void, stopCond: (events: TokensEvent[]) => boolean = e => !!e.at(-1)?.stop) {
         const { last, replace, tokens } = await new Promise<{ tokens: Token[], replace: boolean, last: TokensEvent }>(async resolve => {
             let tokens: Token[] = [];
@@ -717,7 +717,7 @@ export class ClientLine {
             this.tokens.pop();
         }
         this.tokens.push(...tokens);
-        this.unparsedTokens = next === null ? [] : [next.token];
+        this.unparsedContent = next === null ? [] : [{ tokens: [next.token] }];
         return { tokens, entropy, replace, next, stopReasons } as TokenSequence;
     }
     public async pull(stop: StopCondition) {
@@ -726,60 +726,53 @@ export class ClientLine {
         const { content, text } = packTokens(tokens);
         return { content, tokens: tokens, text, entropy, next, stopReasons } as PullResult; 1.
     }
-    public async push(...content: ContentElem[]) {
-        const clearContent: { special: boolean, chunk: string | number[] }[] = [];
-        function parse(e: ContentElem) {
-            if (typeof e === "string") { return { special: false, chunk: e }; }
-            if (e instanceof Array) { return { special: true, chunk: [...e] }; }
-            if (typeof e === "number") { return { special: true, chunk: [e] }; }
-            return { special: e.special, chunk: e.text };
-        }
-        content.forEach(e => {
-            const prev = clearContent.at(-1);
-            if (typeof prev?.chunk === "string") {
-                clearContent.pop();
-                const current = parse(e);
-                if (prev.special === current.special) {
-                    clearContent.push({ special: prev.special, chunk: prev.chunk + current.chunk });
-                } else {
-                    clearContent.push(prev);
-                    clearContent.push(current);
+    public static parseContent(e: ContentElem): InputElem {
+        if (typeof e === "string") { return { special: false, text: e }; }
+        if (e instanceof Array) { return { tokens: [...e] }; }
+        if (typeof e === "number") { return { tokens: [e] }; }
+        return { special: e.special, text: e.text };
+    }
+    public async reset(...content: ContentElem[]) {
+        const pieces = await Promise.all(content.map(ClientLine.parseContent).map(e => e?.tokens !== undefined
+            ? this.client.exec("detokenize", { tokens: e.tokens, unparse_special: true }).then(e => ({ text: e.text, special: true }))
+            : e
+        )) as { text: string, special: boolean }[];
+        let maxTokens: number = 0;
+        for (const token of this.tokens) {
+            const piece = pieces.shift();
+            if (piece === undefined) { break; }
+            if (token.special && !piece.special) { break; }
+            if (piece.text.startsWith(token.piece)) {
+                const newPiece = { text: piece.text.slice(token.piece.length), special: piece.special };
+                if (newPiece.text.length !== 0) {
+                    pieces.unshift(newPiece);
                 }
-            } else if (typeof e === "object" && "messages" in e) {
-                clearContent.push(parse(this.client.scheme(e)));
             } else {
-                clearContent.push(parse(e));
+                break;
             }
-        });
-        const tokens = (await Promise.all(clearContent.map(async e => {
-            if (typeof e.chunk === "string") {
-                return (await this.client.exec("tokenize", { text: e.chunk.replace("\t", "    "), parse_special: e.special })).tokens;
-            } else {
-                return e.chunk;
-            }
-        }))).flat();
-        await this.client.exec('line_push', { line_id: this.lineId, tokens });
-        this.unparsedTokens.push(...tokens);
-        return tokens.length;
+            maxTokens++;
+        }
+        await this.trim(this.tokens.length - maxTokens);
+        await this.push(...pieces);
+    }
+    public async push(...content: ContentElem[]) {
+        const elems = content.map(ClientLine.parseContent);
+        await this.client.exec('line_push', { line_id: this.lineId, content: elems });
+        this.unparsedContent.push(...elems);
     }
     public async cancel() {
-        this.unparsedTokens = [];
+        this.unparsedContent = [];
         await this.client.exec("line_cancel", { line_id: this.lineId });
     }
-    public async trim(nTokens: number, cancel: boolean = true) {
+    public async trim(nTokens: number) {
         this.tokens = this.tokens.slice(0, this.tokens.length - nTokens);
         await this.client.exec("line_trim", { line_id: this.lineId, n_tokens: nTokens });
-        await this.client.exec("line_cancel", { line_id: this.lineId });
-        if (cancel) {
-            this.unparsedTokens = [];
-        } else {
-            await this.client.exec("line_push", { line_id: this.lineId, tokens: this.unparsedTokens });
-        }
+        await this.cancel();
     }
     public async clear() {
         await this.client.exec("line_clear", { line_id: this.lineId });
         this.tokens = [];
-        this.unparsedTokens = [];
+        this.unparsedContent = [];
     }
     public async free() {
         await this.client.exec("line_free", { line_id: this.lineId });

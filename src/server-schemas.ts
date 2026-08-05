@@ -6,7 +6,7 @@ import { InferenceLineParamsScheme, StopReasonsSchema } from './model.js';
 export const SToken = z.object({
     token: z.int().nonnegative(),
     piece: z.string(),
-    control: z.boolean(),
+    special: z.boolean(),
 });
 export const SEventArgs = {
     command_json_error: z.object({ message: z.string() }),
@@ -146,7 +146,10 @@ export const SCommandArgs = {
     }),
     line_push: z.object({
         line_id: z.string(),
-        tokens: z.array(z.int().nonnegative()),
+        content: z.array(z.union([
+            z.object({ text: z.string(), special: z.boolean() }),
+            z.object({ tokens: z.array(z.int().nonnegative()) }),
+        ])),
     }),
     line_trim: z.object({
         line_id: z.string(),
