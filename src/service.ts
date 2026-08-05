@@ -769,6 +769,22 @@ export class ClientLine {
         await this.client.exec("line_trim", { line_id: this.lineId, n_tokens: nTokens });
         await this.cancel();
     }
+    public async trimText(nChars: number) {
+        await this.cancel();
+        let nTokens: number = 0;
+        for (const token of this.tokens.reverse()) {
+            if (nChars > token.piece.length) {
+                nChars -= token.piece.length;
+            } else {
+                const piece = token.piece.slice(token.piece.length - nChars);
+                await this.push({ text: piece, special: false });
+                nChars = 0;
+            }
+            nTokens++;
+            if (nChars === 0) { break; }
+        }
+        await this.trim(nTokens);
+    }
     public async clear() {
         await this.client.exec("line_clear", { line_id: this.lineId });
         this.tokens = [];
