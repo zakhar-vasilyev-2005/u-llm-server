@@ -437,10 +437,11 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
 }
 
 export const defaultTemplateString = `
-{% for message in messages %}
-# *{{ message['role'] }}*:
+{{- bos_token }}
+{% for message in messages %}<|start_message|>{{ message['role'] }}
+
 {{ message['content'] }}
-{% endfor %}
+<|end_of_message|>{% endfor %}
 `.trim();
 export type ModelEventsRaw = {
     [k in keyof typeof SEventArgs]: [z.output<typeof SEventArgs[k]>]
@@ -507,6 +508,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                 throw new Error(`cannot extract model's template from metadata`);
             }
             Object.assign(client.template, new Template(tempalteStr));
+            Object.freeze(Object.assign(client.prefixes, client.createPrefixes()));
             return client;
         } else {
             const errTimeout = new Error(`connection timed out`);
@@ -576,7 +578,10 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         });
         this.on("command_json_error", ({ message }) => console.error(message));
         this.on("command_schema_error", ({ issues }) => console.error("Server Schema Error", issues));
-        this.prefixes = {
+        this.prefixes = this.createPrefixes();
+    }
+    public createPrefixes() {
+        return {
             initToSystem: this.scheme({ messages: [{ role: "system", content: "\uE001" }] }),
             initToUser: this.scheme({ messages: [{ role: "user", content: "\uE001" }] }),
             systemToUser: this.scheme({ messages: [{ role: "system", content: "\uE000" }, { role: "user", content: "\uE001" }] }),
@@ -586,15 +591,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             assistantToTool: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "\uE000" }, { role: "tool", content: "\uE001" }] }),
         };
     }
-    public readonly prefixes: {
-        initToSystem: ContentElem,
-        initToUser: ContentElem,
-        systemToUser: ContentElem,
-        userToAssistant: ContentElem,
-        assistantToUser: ContentElem,
-        toolToAssistant: ContentElem,
-        assistantToTool: ContentElem,
-    };
+    public readonly prefixes: ReturnType<ModelClient["createPrefixes"]>;
     public static rng = new Yurandom(`${process.pid}_${Date.now()}`);
     public async exec<Command extends keyof typeof SCommandArgs>(command: Command, args: z.output<typeof SCommandArgs[Command]>) {
         const query_id = ModelClient.rng.uuid();
