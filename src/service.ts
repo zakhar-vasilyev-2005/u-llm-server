@@ -506,7 +506,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             if (tempalteStr === undefined) {
                 throw new Error(`cannot extract model's template from metadata`);
             }
-            client.template.parsed = new Template(tempalteStr).parsed;
+            Object.assign(client.template, new Template(tempalteStr));
             return client;
         } else {
             const errTimeout = new Error(`connection timed out`);
@@ -538,7 +538,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         }
     }
     public buffer = "";
-    public constructor(
+    protected constructor(
         public readonly socket: Socket,
         public readonly modelMetadata: Record<string, string>,
         public readonly modelParams: ModelParamsSerialized,
