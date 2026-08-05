@@ -760,6 +760,7 @@ export class ClientLine {
     public async step(...content: ContentElem[]) {
         await this.push(...content);
         await this.pull({ max_tokens: 0 });
+        await this.cancel();
         return this.tokens.length;
     }
     public async cancel() {
