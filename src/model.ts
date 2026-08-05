@@ -322,7 +322,9 @@ class Instance implements API {
                     }
                     const tail = input.slice(params.batch_size_per_line);
                     input = input.slice(0, params.batch_size_per_line);
-                    line.input.unshift({ tokens: tail });
+                    if (tail.length !== 0) {
+                        line.input.unshift({ tokens: tail });
+                    }
                     break;
                 }
             }
