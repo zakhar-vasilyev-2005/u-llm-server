@@ -312,15 +312,17 @@ class Instance implements API {
                     continue;
                 } else {
                     input = [];
-                    while (input.length < params.batch_size_per_line && line.input.length !== 0) {
+                    while (!(input.length >= params.batch_size_per_line || line.input.length === 0)) {
                         const raw = line.input.shift();
                         if (this.vocabPtr === null) {
                             throw new Error(`cannot use step() with no vocab initialized`);
                         }
-                        const tokens = raw?.text === undefined ? (raw?.tokens ?? []) : this.llama.tokenize(this.vocabPtr, raw.text, raw.special)
-                        input.push(...tokens.slice(0, params.batch_size_per_line));
-                        line.input.unshift({ tokens: [...tokens.slice(params.batch_size_per_line)] })
+                        const tokens = raw?.text === undefined ? (raw?.tokens ?? []) : this.llama.tokenize(this.vocabPtr, raw.text, raw.special);
+                        input.push(...tokens);
                     }
+                    const tail = input.slice(params.batch_size_per_line);
+                    input = input.slice(0, params.batch_size_per_line);
+                    line.input.unshift({ tokens: tail });
                     break;
                 }
             }
