@@ -757,6 +757,11 @@ export class ClientLine {
         await this.client.exec('line_push', { line_id: this.lineId, content: elems });
         this.unparsedContent.push(...elems);
     }
+    public async step(...content: ContentElem[]) {
+        await this.push(...content);
+        await this.pull({ max_tokens: 0 });
+        return this.tokens.length;
+    }
     public async cancel() {
         this.unparsedContent = [];
         await this.client.exec("line_cancel", { line_id: this.lineId });
@@ -781,6 +786,12 @@ export class ClientLine {
             if (nChars === 0) { break; }
         }
         await this.trim(nTokens);
+    }
+    public async goto(nTokens: number) {
+        if (nTokens > this.tokens.length) {
+            throw new Error(`cannot return to given nTokens: there's less tokens generated than the given nTokens value`);
+        }
+        await this.trim(this.tokens.length - nTokens);
     }
     public async clear() {
         await this.client.exec("line_clear", { line_id: this.lineId });
