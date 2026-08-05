@@ -498,10 +498,15 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                 const socket = createConnection(params, () => resolve(socket));
                 socket.on("error", reject);
             });
-            const client = new ModelClient(socket, {}, {});
+            const client = new ModelClient(socket, {}, {}, new Template(defaultTemplateString));
             const { metadata, model_params } = await client.exec("start", null);
             Object.freeze(Object.assign(client.modelMetadata, metadata));
             Object.freeze(Object.assign(client.modelParams, model_params));
+            const tempalteStr = metadata["tokenizer.chat_template"];
+            if (tempalteStr === undefined) {
+                throw new Error(`cannot extract model's template from metadata`);
+            }
+            client.template.parsed = new Template(tempalteStr).parsed;
             return client;
         } else {
             const errTimeout = new Error(`connection timed out`);
@@ -533,18 +538,13 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         }
     }
     public buffer = "";
-    public readonly template: Template;
     public constructor(
         public readonly socket: Socket,
         public readonly modelMetadata: Record<string, string>,
         public readonly modelParams: ModelParamsSerialized,
+        public readonly template: Template,
     ) {
         super();
-        const tempalteStr = modelMetadata["tokenizer.chat_template"];
-        if (tempalteStr === undefined) {
-            throw new Error(`cannot extract model's template from metadata`);
-        }
-        this.template = new Template(tempalteStr);
         this.setMaxListeners(50);
         this.socket.on("data", piece => {
             this.buffer += piece.toString();
@@ -622,6 +622,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         }
         return { special: true, text: content };
     }
+
     public async closeServer() {
         await this.exec("exit", null);
         await this.close();
