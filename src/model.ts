@@ -3,6 +3,7 @@ import { AtomicFlag } from './atomic-flag.js';
 import { LibEntropy, LibLlama, LibSamplingHelper, ModelSplitModes, type BatchConstructor, type ContextParams, type GGMLLogLevel, type ModelParams, type ModelParamsSerialized, type SamplerConstructor } from './llama-base.js';
 import { expose, getParent } from './worker.js';
 import { parentPort } from 'worker_threads';
+import { sprintf } from 'sprintf-js';
 const { emit, args, exit } = getParent<Events, Args>();
 
 
@@ -287,118 +288,122 @@ class Instance implements API {
         }
     }
     public step(params: InferenceParams) {
-        if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
-        const trimmedLines: number[] = [];
-        let batchTokens = 0;
-        const batchData = this.lines.flatMap(line => {
-            const lineConfig = params.line_params[line.lineId];
-            if (lineConfig === undefined) { return []; }
-            if (line.samplerPtr === null) {
-                return [{
-                    line,
-                    startPos: 0,
-                    input: [],
-                    logitIndex: null,
-                    lineConfig
-                }];
+        const [contextPtr, vocabPtr] = [this.contextPtr, this.vocabPtr];
+        if (contextPtr === null) { throw new Error(`context isn't initialized`); }
+        if (vocabPtr === null) { throw new Error(`vocab isn't initialized`); }
+        const lines = this.lines.flatMap(e => {
+            const stop = params.line_params[e.lineId];
+            if (stop === undefined) {
+                return [];
+            } else {
+                if (e.samplerPtr === null) {
+                    throw new Error(`cannot set line_params for line, that have no sampler`);
+                }
+                return [{ line: e as LineData & { samplerPtr: bigint }, stop }];
             }
-            let input: number[];
+        }).flatMap(e => {
+            if (e.line.input.length !== 0) { return [{ line: e.line, stop: e.stop, trimmed: false }]; }
+            const token = e.line.tokens.at(-1);
+            if (token === undefined) { return []; }
+            this.trim(e.line.lineId, 1);
+            this.push(e.line.lineId, [{ tokens: [token] }]);
+            return [{ line: e.line, stop: e.stop, trimmed: true }];
+        }).map(e => {
+            const input: number[] = [];
             while (true) {
-                if (line.tokens.length >= 1 && line.input.length === 0) {
-                    trimmedLines.push(line.lineId);
-                    const token = line.tokens.at(-1) as number;
-                    this.trim(line.lineId, 1);
-                    this.push(line.lineId, [{ tokens: [token] }]);
-                    continue;
-                } else {
-                    input = [];
-                    while (!(input.length >= params.batch_size_per_line || line.input.length === 0)) {
-                        const raw = line.input.shift();
-                        if (this.vocabPtr === null) {
-                            throw new Error(`cannot use step() with no vocab initialized`);
-                        }
-                        const tokens = raw?.text === undefined ? (raw?.tokens ?? []) : this.llama.tokenize(this.vocabPtr, raw.text, raw.special);
-                        input.push(...tokens);
-                    }
+                const elem = e.line.input.shift();
+                if (elem === undefined) { break; }
+                input.push(...this.to_tokens(elem));
+                if (input.length >= params.batch_size_per_line) {
                     const tail = input.slice(params.batch_size_per_line);
-                    input = input.slice(0, params.batch_size_per_line);
                     if (tail.length !== 0) {
-                        line.input.unshift({ tokens: tail });
+                        e.line.input.unshift({ tokens: tail });
                     }
-                    break;
                 }
             }
-            batchTokens += input.length;
-            const notEnd = line.input.length > 0;
-            return [{
-                line,
-                startPos: line.tokens.length,
-                input,
-                logitIndex: notEnd || input.length === 0 ? null : batchTokens - 1,
-                lineConfig,
-            }];
+            return { line: e.line, stop: e.stop, input, logits: e.line.input.length === 0, trimmed: e.trimmed };
         });
-        if (batchTokens === 0) { return null; }
-        const batch: BatchConstructor = (() => {
-            const token = Array(batchTokens);
-            const pos = Array(batchTokens);
-            const seq_id = Array(batchTokens);
-            const logits = Array(batchTokens).fill(0);
-            for (const seqData of batchData) {
-                const lineId = seqData.line.lineId;
-                const { startPos, input } = seqData;
-                for (let i = 0; i < input.length; i++) {
-                    token[i] = input[i];
-                    pos[i] = startPos + i;
-                    seq_id[i] = [lineId];
+        const batch: BatchConstructor = {
+            n_tokens: lines.map(e => e.input.length).reduce((a, b) => a + b, 0),
+            token: lines.flatMap(e => e.input),
+            pos: lines.flatMap(e => e.input.map((t, i) => e.line.tokens.length + i)),
+            n_seq_id: lines.flatMap(e => e.input.map(() => 1)),
+            seq_id: lines.flatMap(e => e.input.map(() => [e.line.lineId])),
+            embd: null,
+            logits: lines.flatMap(e => e.input.map((t, i) => i === e.input.length - 1 && e.logits ? 1 : 0)),
+        };
+        if (batch.n_tokens === 0) { return null; }
+        const error = this.llama.decode(contextPtr, batch);
+        if (error !== 0) {
+            throw new Error(`llama_decode error ${error}`);
+        }
+        const on_logits = (e: typeof lines extends (infer E)[] ? E : never) => {
+            const line_index = lines.findIndex(ee => ee === e);
+            if (line_index < 0) { throw new Error(`unexpected situation: cannot find line, that's currently processing`); }
+            const logit_index = lines.slice(0, line_index + 1).map(e => e.input.length).reduce((a, b) => a + b, 0) - 1;
+
+            const logits = this.llama.get_logits_ith(contextPtr, this.vocabSize, logit_index);
+            const cur_p = this.samplinghelper.logitsToCurp(logits);
+            this.llama.sampler_apply(e.line.samplerPtr, cur_p);
+            const token = this.samplinghelper.curpToToken(cur_p);
+            const entropy = this.entropy.entropyOfLogits(logits);
+
+            const stopReasons: Generated["stopReasons"] = [];
+            if ((e.stop.eog_stop ?? false) && this.llama.vocab_is_eog(vocabPtr, token)) { stopReasons.push("eog_stop"); }
+            if (entropy > (e.stop.max_entropy ?? Number.POSITIVE_INFINITY)) { stopReasons.push("max_entropy"); }
+            if (entropy < (e.stop.min_entropy ?? 0)) { stopReasons.push("min_entropy"); }
+            if ((e.stop.max_tokens ?? Number.POSITIVE_INFINITY) <= 1) { stopReasons.push("max_tokens"); }
+            return { token, entropy, stopReasons };
+        }
+        const push_tokens = (input: number[], e: typeof lines extends (infer E)[] ? E : never) => {
+            const offset = e.line.samplerOffset - e.line.tokens.length;
+            input.slice(offset < 0 ? input.length : offset).forEach(ee => this.llama.sampler_accept(e.line.samplerPtr, ee));
+            e.line.tokens.push(...e.input);
+        };
+        return lines.map(e => {
+            let input: number[];
+            let token: number | null;
+            let entropy: number | null;
+            let stopReasons: Generated["stopReasons"];
+            if (e.trimmed) {
+                input = [];
+                if (e.logits) {
+                    push_tokens(input, e);
+                    const res = on_logits(e);
+                    token = res.token;
+                    entropy = res.entropy;
+                    stopReasons = res.stopReasons;
+                    this.push(e.line.lineId, [{ tokens: [token] }]);
+                } else {
+                    token = null;
+                    entropy = null;
+                    stopReasons = [];
                 }
-                if (seqData.logitIndex !== null) {
-                    logits[seqData.logitIndex] = 1;
+            } else {
+                input = e.input;
+                if (e.logits) {
+                    push_tokens(input, e);
+                    const res = on_logits(e);
+                    token = res.token;
+                    entropy = res.entropy;
+                    stopReasons = res.stopReasons;
+                    this.push(e.line.lineId, [{ tokens: [token] }]);
+                } else {
+                    push_tokens(input, e);
+                    token = null;
+                    entropy = null;
+                    stopReasons = [];
                 }
             }
-            return { n_tokens: batchTokens, token, embd: null, pos, n_seq_id: Array(batchTokens).fill(1), seq_id, logits, };
-        })();
-        const code = this.llama.decode(this.contextPtr, batch);
-        if (code !== 0) { throw new Error(`llama_decode error code ${code}`); }
-        const generated = batchData.map(seqData => {
-            const { lineId, samplerPtr } = seqData.line;
-            const { input, lineConfig } = seqData;
-            (this.lines[lineId] as LineData).tokens.push(...input);
-            let entropy = 0;
-            let token: number | null = null;
-            if (seqData.logitIndex !== null && samplerPtr !== null) {
-                const logits = this.llama.get_logits_ith(this.contextPtr as bigint, this.vocabSize, seqData.logitIndex);
-                entropy = this.entropy.entropyOfLogits(logits);
-                const cur_p = this.samplinghelper.logitsToCurp(logits);
-                this.llama.sampler_apply(samplerPtr, cur_p);
-                token = this.samplinghelper.curpToToken(cur_p);
-                this.push(lineId, [{ tokens: [token] }]);
-            }
-            const stopReasons: StopReason[] = [];
-            if (token !== null) {
-                if (entropy < (lineConfig.min_entropy ?? 0)) {
-                    stopReasons.push("min_entropy");
-                }
-                if (entropy > (lineConfig.max_entropy ?? Number.POSITIVE_INFINITY)) {
-                    stopReasons.push("max_entropy");
-                }
-                if ((lineConfig.eog_stop ?? false) && this.llama.vocab_is_eog(this.vocabPtr as bigint, token)) {
-                    stopReasons.push("eog_stop");
-                }
-                if (lineConfig.max_tokens !== undefined && lineConfig.max_tokens <= 1) {
-                    stopReasons.push("max_tokens");
-                }
-            }
-            if (trimmedLines.some(e => e === lineId)) {
-                input.shift();
-            }
-            if (samplerPtr !== null) {
-                const offset = seqData.line.samplerOffset - seqData.line.tokens.length;
-                input.slice(Math.max(0, offset)).forEach(e => this.llama.sampler_accept(samplerPtr, e));
-            }
-            return { lineId, token, entropy, input, replace: false, stop: stopReasons.length > 0, stopReasons } as Generated;
+            return { lineId: e.line.lineId, input, stop: stopReasons.length !== 0, stopReasons, token, entropy } as Generated;
         });
-        return generated;
+    }
+    public to_tokens(elem: InputElem) {
+        if (elem.tokens !== undefined) { return elem.tokens; }
+        if (this.vocabPtr === null) {
+            throw new Error(`cannot call to_tokens on text-elems without initialized vocab`);
+        }
+        return this.llama.tokenize(this.vocabPtr, elem.text, elem.special);
     }
     public metadata() {
         if (this.modelPtr === null) { throw new Error(`model isn't loaded`); }

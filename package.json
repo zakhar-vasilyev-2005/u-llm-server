@@ -1,6 +1,6 @@
 {
   "name": "u-llm-server",
-  "version": "1.10.7",
+  "version": "1.11.0",
   "description": "A llama.cpp-based inference server with slightly extended capabilities in realtime inference control.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,7 +9,8 @@
     "binaries"
   ],
   "scripts": {
-    "debug": "npm run build && npm start",
+    "debug": "npm run build && npm test",
+    "test": "node dist/test.js",
     "start": "node dist/main.js",
     "build": "tsc",
     "prepublishOnly": "npm run build"
