@@ -319,6 +319,7 @@ class Instance implements API {
                     if (tail.length !== 0) {
                         e.line.input.unshift({ tokens: tail });
                     }
+                    break;
                 }
             }
             return { line: e.line, stop: e.stop, input, logits: e.line.input.length === 0, trimmed: e.trimmed };
@@ -357,7 +358,7 @@ class Instance implements API {
         }
         const push_tokens = (input: number[], e: typeof lines extends (infer E)[] ? E : never) => {
             const offset = e.line.samplerOffset - e.line.tokens.length;
-            input.slice(offset < 0 ? input.length : offset).forEach(ee => this.llama.sampler_accept(e.line.samplerPtr, ee));
+            input.slice(offset < 0 ? 0 : offset).forEach(ee => this.llama.sampler_accept(e.line.samplerPtr, ee));
             e.line.tokens.push(...e.input);
         };
         return lines.map(e => {
