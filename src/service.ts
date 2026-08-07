@@ -28,6 +28,7 @@ export const runModelDefaults = {
         use_extra_bufts: true,
     } as ModelParamsSerialized,
     contextParams: {
+        flash_attn_type: "enabled",
         n_ctx: 2048,
         n_batch: 256,
         n_ubatch: 256,
@@ -43,6 +44,7 @@ export const runModelDefaults = {
 export type RunModelParams = {
     binaries_path: string,
     model_file: string,
+    model_params: ModelParamsSerialized,
     callback: (model: Model) => void | Promise<void>,
     log: (message: string) => void,
 };
@@ -64,7 +66,7 @@ export async function runModel(params: RunModelParams) {
         let loadStart = Date.now();
         let started = false;
         let prevProgress = 0;
-        const model_params = Object.assign(runModelDefaults.modelParams, {
+        const model_params = Object.assign(params.model_params, {
             progress_callback: async (progress: number) => {
                 if (!started) {
                     log(`PRELOAD: done in ${Date.now() - preloadStart}ms`);
@@ -377,6 +379,7 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
         await runModel({
             binaries_path: binariesPath,
             model_file: this.modelFile, log: this.log,
+            model_params: this.modelParams,
             callback: async model => {
                 this.model = model;
                 this.freeLines = [...model.lines];
