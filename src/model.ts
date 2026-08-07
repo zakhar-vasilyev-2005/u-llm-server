@@ -309,13 +309,14 @@ class Instance implements API {
             this.push(e.line.lineId, [{ tokens: [token] }]);
             return [{ line: e.line, stop: e.stop, trimmed: true }];
         }).map(e => {
-            const input: number[] = [];
+            let input: number[] = [];
             while (true) {
                 const elem = e.line.input.shift();
                 if (elem === undefined) { break; }
                 input.push(...this.to_tokens(elem));
                 if (input.length >= params.batch_size_per_line) {
                     const tail = input.slice(params.batch_size_per_line);
+                    input = input.slice(0, params.batch_size_per_line);
                     if (tail.length !== 0) {
                         e.line.input.unshift({ tokens: tail });
                     }
