@@ -634,8 +634,12 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
 
 
 
-export function packTokens(tokens: Token[]) {
-    const content: (number | string)[] = [];
+export type PackedTokens = {
+    content: (string | number)[],
+    text?: string | undefined
+};
+export function packTokens(tokens: Token[], prevState: PackedTokens = { content: [] }): PackedTokens {
+    const content: (number | string)[] = prevState.content;
     tokens.forEach(e => {
         if (e.special) {
             content.push(e.token);
@@ -658,7 +662,14 @@ export type TokenSequence = {
     next: Token | null,
     stopReasons: StopReason[]
 };
-export type StopCondition = InferenceLineParams;
+export type StopPredicateArg = Omit<PullResult, "entropy"> & {
+    lastToken: Token,
+    entropy: number | null,
+    stop: boolean,
+};
+export type StopCondition = InferenceLineParams & {
+    stop_predicate?: (data: StopPredicateArg) => boolean
+};
 export type ContentElem = string | number | number[] | InputElem | TemplateInput;
 export type TemplateInput = {
     messages: {
@@ -670,7 +681,7 @@ export type TemplateInput = {
 };
 
 
-export type PullResult = ReturnType<typeof packTokens> & TokenSequence;
+export type PullResult = PackedTokens & TokenSequence;
 export class ClientLine {
     public async loadContent(file: string) {
         await this.cancel();
@@ -722,9 +733,38 @@ export class ClientLine {
     }
     public async pull(stop: StopCondition) {
         await this.client.exec("line_init", { line_id: this.lineId, inference: stop });
-        const { tokens, entropy, next, stopReasons } = await this.pullRaw(() => this.client.exec("line_start", { line_id: this.lineId }));
-        const { content, text } = packTokens(tokens);
-        return { content, tokens: tokens, text, entropy, next, stopReasons } as PullResult; 1.
+        const { stop_predicate } = stop;
+        let packed: PackedTokens = { content: [] };
+        let packedTokens: Token[] = [];
+        const startPos = this.tokens.length;
+        const { tokens, entropy, next, stopReasons } = await this.pullRaw(
+            () => this.client.exec("line_start", { line_id: this.lineId }),
+            stop_predicate === undefined ? undefined : (events => {
+                const last = events.at(-1);
+                const eventsTokens = events.flatMap(e => e.input);
+                packed = packTokens(eventsTokens.slice(packedTokens.length), packed);
+                packedTokens = eventsTokens;
+                return (
+                    last === undefined ||
+                    stop_predicate({
+                        lastToken: eventsTokens.at(-1) as Token,
+                        tokens: eventsTokens,
+                        content: packed.content,
+                        text: packed.text,
+                        entropy: last.entropy,
+                        next: last.next,
+                        stopReasons: last.stopReasons,
+                        stop: last.stop,
+                    }) ||
+                    last.stop
+                );
+            })
+        );
+        await this.goto(startPos + packedTokens.length);
+        if (next !== null) {
+            this.unparsedContent.push({ text: next.piece, special: next.special });
+        }
+        return { content: packed.content, tokens, text: packed.text, entropy, next, stopReasons } as PullResult; 1.
     }
     public static parseContent(e: ContentElem): InputElem {
         if (typeof e === "string") { return { special: false, text: e }; }
@@ -771,6 +811,10 @@ export class ClientLine {
         await this.client.exec("line_cancel", { line_id: this.lineId });
     }
     public async trim(nTokens: number) {
+        if (nTokens < 0) {
+            throw new Error(`nTokens expected to be >=0`);
+        }
+        if (nTokens === 0) { return; }
         this.tokens = this.tokens.slice(0, this.tokens.length - nTokens);
         await this.client.exec("line_trim", { line_id: this.lineId, n_tokens: nTokens });
         await this.cancel();
