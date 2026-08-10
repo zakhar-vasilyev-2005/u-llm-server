@@ -246,9 +246,10 @@ export type StopCondition = InferenceLineParams & {
     stop_predicate?: (data: StopPredicateArg) => boolean
 };
 export type ContentElem = string | number | number[] | InputElem | TemplateInput;
+export type ChatRole = "system" | "user" | "assistant" | "tool";
 export type TemplateInput = {
     messages: {
-        role: "system" | "user" | "assistant" | "tool",
+        role: ChatRole,
         content: Serializable,
         [k: string | number]: Serializable,
     }[],
