@@ -308,7 +308,7 @@ export class ClientLine {
         const { stop_predicate } = stop;
         let packed: PackedTokens = { content: [] };
         let packedTokens: Token[] = [];
-        const startPos = this.tokens.length;
+        let endPos: number | undefined = undefined;
         const { tokens, entropy, next, stopReasons } = await this.pullRaw(
             () => this.client.exec("line_start", { line_id: this.lineId }),
             stop_predicate === undefined ? undefined : (events => {
@@ -316,24 +316,25 @@ export class ClientLine {
                 const eventsTokens = events.flatMap(e => e.input);
                 packed = packTokens(eventsTokens.slice(packedTokens.length), packed);
                 packedTokens = eventsTokens;
-                return (
-                    last === undefined ||
-                    stop_predicate({
-                        lastToken: eventsTokens.at(-1) as Token,
-                        tokens: eventsTokens,
-                        content: packed.content,
-                        text: packed.text,
-                        entropy: last.entropy,
-                        next: last.next,
-                        stopReasons: last.stopReasons,
-                        stop: last.stop,
-                    }) ||
-                    last.stop
-                );
+                if (last === undefined || stop_predicate({
+                    lastToken: eventsTokens.at(-1) as Token,
+                    tokens: eventsTokens,
+                    content: packed.content,
+                    text: packed.text,
+                    entropy: last.entropy,
+                    next: last.next,
+                    stopReasons: last.stopReasons,
+                    stop: last.stop,
+                })) {
+                    endPos = eventsTokens.length;
+                    this.client.exec("line_stop", { line_id: this.lineId }).catch(e => { throw e; });
+                }
+                return !!last?.stop;
             })
         );
-        await this.client.exec("line_stop", { line_id: this.lineId });
-        await this.goto(startPos + packedTokens.length);
+        if (endPos !== undefined) {
+            await this.goto(endPos);
+        }
         if (next !== null) {
             this.unparsedContent.push({ text: next.piece, special: next.special });
         }

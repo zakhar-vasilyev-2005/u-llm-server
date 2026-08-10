@@ -75,7 +75,7 @@ export type Generated = (
     })
 );
 export type StopReason = z.output<typeof StopReasonsSchema>;
-export const StopReasonsSchema = z.enum(["min_entropy", "max_entropy", "eog_stop", "max_tokens"]);
+export const StopReasonsSchema = z.enum(["min_entropy", "max_entropy", "eog_stop", "max_tokens", "manual_stop"]);
 export const InferenceLineParamsScheme = z.object({
     min_entropy: z.number().min(0).optional(),
     max_entropy: z.number().min(0).optional(),
@@ -263,7 +263,8 @@ class Instance implements API {
     }
     public start(params: InferenceParams) {
         if (this.contextPtr === null) { throw new Error(`context isn't initialized`); }
-        while (Object.keys(params.line_params).length !== 0) {
+        let stop = false;
+        while (Object.keys(params.line_params).length !== 0 && !stop) {
             params.line_params = Object.fromEntries(Object.entries(params.line_params).flatMap(([lineId, p]) => {
                 if (p.max_tokens !== undefined && p.max_tokens < 0) {
                     return [];
@@ -271,7 +272,7 @@ class Instance implements API {
                     return [[lineId, p]];
                 }
             }));
-            const generated = this.step(params);
+            let generated = this.step(params);
             if (generated === null) { break; }
             generated.forEach(e => {
                 const p = params.line_params[e.lineId];
@@ -283,8 +284,15 @@ class Instance implements API {
                 const p = params.line_params[e.lineId];
                 return p !== undefined && !e.stop ? [[e.lineId, p]] : [];
             }));
+            stop ||= generated.every(e => e.stop);
+            if (!!this.stopFlag.get()) {
+                stop = true;
+                generated = generated.map(e => Object.assign(
+                    Object.assign({}, e),
+                    { stop: true, stopReasons: [...e.stopReasons, "manual_stop"] as StopReason[] }
+                ));
+            }
             emit("tokens", generated);
-            if (this.stopFlag.get() || generated.every(e => e.stop)) { break; }
         }
     }
     public step(params: InferenceParams) {
