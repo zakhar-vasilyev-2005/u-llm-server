@@ -1,13 +1,14 @@
 import path from "path";
 import { type ModelParamsSerialized } from "./llama-base.js";
-import { ModelServer, type ConnOption } from "./service.js";
+import { ModelServer, type ConnOption } from "./server.js";
 import { Argument, Command, Option } from 'commander';
 import { Yurandom } from "yurandom/index.js";
 
 export * from './llama.js';
 export * from './model.js';
 export * from './llama-base.js';
-export * from './service.js';
+export * from './server.js';
+export * from './client.js';
 export * from './server-schemas.js';
 
 
