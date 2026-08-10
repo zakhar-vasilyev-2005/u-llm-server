@@ -1,5 +1,4 @@
-import { exec } from 'child_process';
-import { ClientLine, ModelClient } from './server.js';
+import { ClientLine, ModelClient } from './client.js';
 
 const client = await ModelClient.create({
     conn: { port: 32256 },
