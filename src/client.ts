@@ -237,10 +237,15 @@ export type TokenSequence = {
     next: Token | null,
     stopReasons: StopReason[]
 };
-export type StopPredicateArg = Omit<PullResult, "entropy"> & {
-    lastToken: Token,
-    entropy: number | null,
-    stop: boolean,
+export type StopPredicateArg = {
+    next: Token | null;
+    entropy: number | null;
+    stopReasons: StopReason[];
+    stop: boolean;
+    text?: string | undefined;
+    tokensRecieved: Token[];
+    tokensRecievedNow: Token[],
+    content: (string | number)[];
 };
 export type StopCondition = InferenceLineParams & {
     stop_predicate?: (data: StopPredicateArg) => boolean
@@ -314,11 +319,12 @@ export class ClientLine {
             stop_predicate === undefined ? undefined : (events => {
                 const last = events.at(-1);
                 const eventsTokens = events.flatMap(e => e.input);
-                packed = packTokens(eventsTokens.slice(packedTokens.length), packed);
+                const unpackedTokens = eventsTokens.slice(packedTokens.length);
+                packed = packTokens(unpackedTokens, packed);
                 packedTokens = eventsTokens;
                 if (last === undefined || stop_predicate({
-                    lastToken: eventsTokens.at(-1) as Token,
-                    tokens: eventsTokens,
+                    tokensRecieved: eventsTokens,
+                    tokensRecievedNow: unpackedTokens,
                     content: packed.content,
                     text: packed.text,
                     entropy: last.entropy,
