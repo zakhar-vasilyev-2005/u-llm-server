@@ -31,7 +31,7 @@ export type ModelClientEvents = ModelEventsRaw & {
     client_close: [],
 };
 export interface ModelClientParams {
-    conn: { unix: string } | { host?: string, port: number },
+    conn: ConnOption,
     timeout?: number,
     fallbackStartServer?: undefined | {
         modelFile: string,
