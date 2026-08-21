@@ -13,7 +13,7 @@ import { createFreeEvent } from "./event-util.js";
 
 
 type PromiseOrNot<T> = T | Promise<T>;
-export type ConnOption = { unix: string, host?: undefined, port?: undefined } | { unix?: undefined, host?: string, port: number };
+export type ConnOption = { unix: string, host?: undefined, port?: undefined } | { unix?: undefined, host?: string | undefined, port: number };
 
 
 export const runModelDefaults = {
@@ -353,7 +353,7 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
         await new Promise((resolve, reject) => {
             this.server.on("listening", resolve);
             this.server.on("error", reject);
-            if ("unix" in conn) {
+            if (conn.unix !== undefined) {
                 this.server.listen(conn.unix);
                 this.log(`LISTENING at ${JSON.stringify("unix:" + conn.unix)}`);
             } else {

@@ -72,7 +72,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
     }
     public static async connect(conn: ConnOption, timeout: number = 0): Promise<ModelClient> {
         if (timeout <= 0) {
-            const params = ("unix" in conn ? { path: conn.unix } : { port: conn.port, host: conn.host ?? "localhost" }) as NetConnectOpts;
+            const params = (conn.unix !== undefined ? { path: conn.unix } : { port: conn.port, host: conn.host ?? "localhost" }) as NetConnectOpts;
             const socket = await new Promise<Socket>((resolve, reject) => {
                 const socket = createConnection(params, () => resolve(socket));
                 socket.on("error", reject);
