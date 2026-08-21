@@ -344,6 +344,7 @@ export class ClientLine {
         if (next !== null) {
             this.unparsedContent.push({ text: next.piece, special: next.special });
         }
+        await this.cancel();
         return { content: packed.content, tokens, text: packed.text, entropy, next, stopReasons } as PullResult; 1.
     }
     public static parseContent(e: ContentElem): InputElem {

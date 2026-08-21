@@ -13,7 +13,7 @@ import { createFreeEvent } from "./event-util.js";
 
 
 type PromiseOrNot<T> = T | Promise<T>;
-export type ConnOption = { unix: string } | { host?: string, port: number };
+export type ConnOption = { unix: string, host?: undefined, port?: undefined } | { unix?: undefined, host?: string, port: number };
 
 
 export const runModelDefaults = {
