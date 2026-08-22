@@ -25,6 +25,7 @@ export type ModelEventsRaw = {
     [k in keyof typeof SEventArgs]: [z.output<typeof SEventArgs[k]>]
 };
 export type ModelClientEvents = ModelEventsRaw & {
+    socket_error: [Error],
     message_json_error: [SyntaxError],
     message_schema_error: [z.ZodError<SMessage>],
     raw_message: [SMessage],
@@ -73,11 +74,18 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
     public static async connect(conn: ConnOption, timeout: number = 0): Promise<ModelClient> {
         if (timeout <= 0) {
             const params = (conn.unix !== undefined ? { path: conn.unix } : { port: conn.port, host: conn.host ?? "localhost" }) as NetConnectOpts;
+            let errBuffer: Error[] = [];
+            const errBufferizer = (err: Error) => errBuffer.push(err);
             const socket = await new Promise<Socket>((resolve, reject) => {
                 const socket = createConnection(params, () => resolve(socket));
-                socket.on("error", reject);
+                socket.on("error", errBufferizer);
+                socket.once("error", reject);
             });
             const client = new ModelClient(socket, {}, {}, new Template(defaultTemplateString));
+            const errRouter = (err: Error) => client.emit("socket_error", err);
+            socket.off("error", errBufferizer);
+            errBuffer.forEach(errRouter);
+            socket.on("error", errRouter);
             const { metadata, model_params } = await client.exec("start", null);
             Object.freeze(Object.assign(client.modelMetadata, metadata));
             Object.freeze(Object.assign(client.modelParams, model_params));

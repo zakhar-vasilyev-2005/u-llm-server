@@ -146,6 +146,9 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
                         }
                     }
                 });
+                socket.on("error", err => {
+                    this.log(`SOCKET ERROR (client ${this.socketIds.get(socket)}): ${err.message} (fields: ${JSON.stringify(Object.assign({}, err), undefined, 4)})`);
+                });
                 socket.on("close", () => {
                     this.log(`DISCONNECT (client ${this.socketIds.get(socket)})`);
                     this.sockets = this.sockets.filter(s => s !== socket);
