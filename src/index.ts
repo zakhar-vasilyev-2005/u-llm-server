@@ -9,6 +9,7 @@ export * from './model.js';
 export * from './llama-base.js';
 export * from './server.js';
 export * from './client.js';
+export * from './client-line.js';
 export * from './server-schemas.js';
 
 
