@@ -14,7 +14,6 @@ export type API = {
 
 
 const llama = new LibLlama(getParent<Events, Args>().args.llama_library);
-llama.log_set(() => { });
 
 export function tokeninfo(vocabPtr: bigint, start: number = 0, end: number = Number.POSITIVE_INFINITY) {
     const size = llama.vocab_n_tokens(vocabPtr);

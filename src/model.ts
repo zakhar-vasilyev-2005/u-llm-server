@@ -104,7 +104,6 @@ class Instance implements API {
     public lines: LineData[] = [];
     public constructor(args: Args) {
         this.llama = new LibLlama(args.llama_library);
-        this.llama.log_set((level, message) => emit("llama_log", level, message));
         this.entropy = new LibEntropy(args.entropy_library);
         this.samplinghelper = new LibSamplingHelper(args.samplinghelper_library);
         this.mparams = this.llama.model_default_params();
