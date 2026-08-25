@@ -3,12 +3,14 @@ import { EventEmitter } from 'events';
 import path from 'path';
 import { createFreeEvent } from './event-util.js';
 import { Worker } from './worker.js';
-import type { API as modelAPI, Events as modelEvents, Args as modelArgs, InferenceParams, InferenceLineParams, StopReason, InputElem } from './model.js';
+import type { API as modelAPI, Events as modelEvents, Args as modelArgs, InferenceLineParams, StopReason, InputElem } from './model.js';
 import { AtomicFlag } from './atomic-flag.js';
 import { createGGMLLogger, LibEntropy, LibGGML, LibLlama, LibSamplingHelper, type ContextParams, type GGMLLogLevel, type ModelParams, type ModelParamsSerialized, type SamplerConstructor } from './llama-base.js';
 import { GrowBuffer } from './growbuffer.js';
 import * as tmp from 'tmp';
-
+import { cpus } from 'os';
+import type { Args as tiArgs, Events as tiEvents, API as tiAPI } from './tokeninfo.js';
+import type { TokenInfo } from './tokeninfo-base.js';
 
 
 export type BackendEvents = {
@@ -138,13 +140,26 @@ export class Model extends EventEmitter<ModelEvents> {
         ]);
         if (!loaded || modelPtr === null) { throw Object.assign(new Error(`model not loaded`), { code: "MODEL_NOT_LOADED" }); }
         const vocabPtr = backend.llama.model_get_vocab(modelPtr);
+        const vocabSize = backend.llama.vocab_n_tokens(vocabPtr);
         const metadata = await worker.api.metadata();
         await worker.api.set_context(context_params);
         const n_seq_max = await worker.api.get_n_seq_max();
+        const threads = cpus();
+        const tisize = (vocabSize / threads.length) + (vocabSize % threads.length === 0 ? 0 : 1);
+        const tokeninfo = (await Promise.all(threads.map((e, i, a) => (
+            { start: i * tisize, end: (i + 1) * tisize }
+        )).map(range => (
+            Worker.start<tiAPI, tiEvents, tiArgs>(
+                path.join(import.meta.dirname, "tokeninfo.js"),
+                { llama_library: backend.llama.file },
+            ).then(w => (
+                w.api.tokeninfo(vocabPtr, range.start, range.end)
+            ))
+        )))).reduce(Object.assign, {});
         const model = new Model(
             backend, worker, stopFlag, model_file, modelPtr, vocabPtr,
             Object.freeze(model_params), Object.assign(context_params, { n_seq_max }),
-            Object.freeze(metadata), batchSizePerLine
+            Object.freeze(metadata), Object.freeze(tokeninfo), batchSizePerLine
         );
         await Promise.all(model.lines.map(e => e.setSampler([{ type: "greedy" }])));
         return model;
@@ -160,6 +175,7 @@ export class Model extends EventEmitter<ModelEvents> {
         public readonly modelParams: ModelParamsSerialized,
         public contextParams: ContextParams & { n_seq_max: number },
         public readonly metadata: Record<string, string>,
+        public readonly tokeninfo: Record<string, TokenInfo>,
         public readonly batchSizePerLine: number,
     ) {
         super();

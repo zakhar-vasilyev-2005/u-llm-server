@@ -246,7 +246,7 @@ export type RQSubstringOptions = RQRegexOptions & {
 };
 export type RQOnMatch = (data: StopPredicateArg, m: RegExpExecArray, source: { tokens: Token[] } & PackedTokens) => RQ | undefined | boolean;
 export class RQ {
-    public path: string[] = [];
+    public path: { name: string, rq: RQ, [k: string]: unknown }[] = [];
     public constructor(
         public readonly stopCondition: (this: RQ, ...args: Parameters<StopCondition["stop_predicate"] extends (infer T) | undefined ? T : never>) => boolean,
         public readonly inferenceParams: InferenceLineParams = {},
@@ -255,7 +255,7 @@ export class RQ {
         return new RQ(function (data) {
             return conditions.some((e, i) => {
                 if (e.stopCondition(data)) {
-                    this.path.unshift(`some-${i}`);
+                    this.path.unshift({ name: "some", rq: this, branchIndex: i, branchRq: e });
                     return true;
                 }
                 return false;
@@ -264,19 +264,18 @@ export class RQ {
     }
     public static every(...conditions: RQ[]) {
         return new RQ(function (data) {
-            return conditions.every((e, i) => {
-                if (e.stopCondition(data)) {
-                    this.path.unshift(`every-${i}`);
-                    return true;
-                }
-                return false;
-            });
+            if (conditions.every(e => e.stopCondition(data))) {
+                this.path.unshift({ name: "every", rq: this, branches: conditions });
+                return true;
+            };
+            return false;
         });
     }
     public not() {
+        const base = this;
         return new RQ(function (data) {
             if (!this.stopCondition(data)) {
-                this.path.unshift("not");
+                this.path.unshift({ name: "not", rq: this, baseRq: base });
                 return true;
             }
             return false;
@@ -289,6 +288,7 @@ export class RQ {
         pattern = new RegExp(pattern.source, pattern.flags);
         const spToken = options.special_token ?? "restart_regex";
         const global = pattern.flags.includes("g");
+        let lastMatch: null | RegExpExecArray = null;
         let end = false;
         const stopCondition: RQ["stopCondition"] = data => {
             const { textSpecial, tokensRecieved, tokensRecievedNow } = data;
@@ -310,15 +310,15 @@ export class RQ {
             }
             try {
                 const last = pattern.lastIndex;
-                const m = pattern.exec(spToken === "include" ? textSpecial : text);
-                if (m === null) {
+                lastMatch = pattern.exec(spToken === "include" ? textSpecial : text);
+                if (lastMatch === null) {
                     pattern.lastIndex = last;
                     return false;
                 } else {
                     if (!global) {
                         end = true;
                     }
-                    const res = onMatch(data, m, Object.assign({ tokens }, packed)) ?? false;
+                    const res = onMatch(data, lastMatch, Object.assign({ tokens }, packed)) ?? false;
                     if (typeof res === "boolean") {
                         return res;
                     } else if (res instanceof RQ) {
@@ -339,7 +339,7 @@ export class RQ {
         };
         return new RQ(function (data) {
             if (stopCondition.call(this, data)) {
-                this.path.unshift("regex");
+                this.path.unshift({ name: "regex", rq: this, pattern, lastMatch });
                 return true;
             }
             return false;
@@ -351,13 +351,13 @@ export class RQ {
     public static cond(stopCondition: RQ["stopCondition"]) {
         return new RQ(function (data) {
             if (stopCondition.call(this, data)) {
-                this.path.unshift("cond");
+                this.path.unshift({ name: "cond", rq: this, func: stopCondition });
                 return true;
             }
             return false;
         });
     }
-    public async pull(line: ClientLine, inferenceParams: InferenceLineParams) {
+    public async pull(line: ClientLine, inferenceParams: InferenceLineParams = {}) {
         this.path = [];
         const result = await line.pull(this.with(inferenceParams));
         return Object.assign(result, { stopPath: this.path });

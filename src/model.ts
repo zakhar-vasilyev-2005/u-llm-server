@@ -3,7 +3,7 @@ import { AtomicFlag } from './atomic-flag.js';
 import { LibEntropy, LibLlama, LibSamplingHelper, ModelSplitModes, type BatchConstructor, type ContextParams, type GGMLLogLevel, type ModelParams, type ModelParamsSerialized, type SamplerConstructor } from './llama-base.js';
 import { expose, getParent } from './worker.js';
 import { parentPort } from 'worker_threads';
-import { sprintf } from 'sprintf-js';
+import { tokeninfoBase, type TokenInfo } from './tokeninfo-base.js';
 const { emit, args, exit } = getParent<Events, Args>();
 
 
@@ -23,6 +23,7 @@ export type API = {
     start: (params: InferenceParams) => void,
     step: (params: InferenceParams) => Generated[] | null,
     metadata: () => Record<string, string>,
+    tokeninfo: (start?: number | undefined, end?: number | undefined) => Record<string, TokenInfo>,
     exit: () => void,
 };
 export type Events = {
@@ -426,6 +427,14 @@ class Instance implements API {
         }
         return result;
     }
+    public tokeninfo(start: number = 0, end: number = Number.POSITIVE_INFINITY) {
+        if (this.vocabPtr === null) {
+            throw new Error(`vocab must be loaded to call .tokeninfo()`);
+        }
+        const startIndex = start <= 0 ? 0 : start >= this.vocabSize ? this.vocabSize : start;
+        const endIndex = end <= 0 ? 0 : end >= this.vocabSize ? this.vocabSize : end;
+        return tokeninfoBase(this.llama, this.vocabPtr, startIndex, endIndex);
+    }
     public free() {
         if (this.contextPtr !== null) {
             this.llama.context_free(this.contextPtr);
@@ -460,6 +469,7 @@ if (parentPort !== null) {
         start: (p) => instance.start(p),
         step: (p) => instance.step(p),
         metadata: () => instance.metadata(),
+        tokeninfo: (s = 0, e = undefined) => instance.tokeninfo(s, e),
     });
 }
 

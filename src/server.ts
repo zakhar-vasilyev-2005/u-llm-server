@@ -172,7 +172,8 @@ export class ModelServer extends EventEmitter<ModelServerEvents> {
             while (this.model === null) {
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
-            return { command: "start", args: { model_params: getModel().modelParams, metadata: getModel().metadata } };
+            const m = this.model;
+            return { command: "start", args: { model_params: m.modelParams, metadata: m.metadata, tokeninfo: m.tokeninfo } };
         });
         server.bind("set_context", async args => {
             await getModel().setContext(args.context_params);

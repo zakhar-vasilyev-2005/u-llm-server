@@ -12,6 +12,7 @@ import { fork, type IOType } from "child_process";
 import type Stream from "stream";
 import type { ConnOption } from "./server.js";
 import type { Serializable } from "./serializable.js";
+import type { TokenInfo } from "./tokeninfo-base.js";
 
 export const defaultTemplateString = `
 {{- bos_token }}
@@ -89,13 +90,14 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                 socket.on("error", errBufferizer);
                 socket.once("error", reject);
             });
-            const client = new ModelClient(socket, {}, {}, new Template(defaultTemplateString));
+            const client = new ModelClient(socket, {}, {}, {}, new Template(defaultTemplateString));
             const errRouter = (err: Error) => client.emit("socket_error", err);
             socket.off("error", errBufferizer);
             errBuffer.forEach(errRouter);
             socket.on("error", errRouter);
-            const { metadata, model_params } = await client.exec("start", null);
+            const { metadata, tokeninfo, model_params } = await client.exec("start", null);
             Object.freeze(Object.assign(client.modelMetadata, metadata));
+            Object.freeze(Object.assign(client.modelTokenInfo, tokeninfo));
             Object.freeze(Object.assign(client.modelParams, model_params));
             const tempalteStr = metadata["tokenizer.chat_template"];
             if (tempalteStr === undefined) {
@@ -137,6 +139,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
     protected constructor(
         public readonly socket: Socket,
         public readonly modelMetadata: Record<string, string>,
+        public readonly modelTokenInfo: Record<number, TokenInfo>,
         public readonly modelParams: ModelParamsSerialized,
         public readonly template: Template,
     ) {
