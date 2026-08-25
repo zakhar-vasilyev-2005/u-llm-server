@@ -1,9 +1,9 @@
 import { type SamplerConstructor } from "./llama-base.js";
 import { SEventArgs, SToken } from './server-schemas.js';
 import * as z from "zod";
-import type { Serializable } from "./serializable.js";
 import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
 import type { ModelClient, TemplateInput } from "./client.js";
+import { stripField } from "./typeutils.js";
 
 
 
@@ -42,12 +42,13 @@ export type StopPredicateArg = {
     stopReasons: StopReason[];
     stop: boolean;
     text?: string | undefined;
+    textSpecial: string,
     tokensRecieved: Token[];
     tokensRecievedNow: Token[],
     content: (string | number)[];
 };
 export type StopCondition = InferenceLineParams & {
-    stop_predicate?: (data: StopPredicateArg) => boolean
+    stop_predicate?: ((data: StopPredicateArg) => boolean) | undefined,
 };
 export type ContentElem = string | number | number[] | InputElem | TemplateInput;
 
@@ -98,25 +99,35 @@ export class ClientLine {
         this.unparsedContent = next === null ? [] : [{ tokens: [next.token] }];
         return { tokens, entropy, next, stopReasons } as TokenSequence;
     }
-    public async pull(stop: StopCondition) {
-        await this.client.exec("line_init", { line_id: this.lineId, inference: stop });
-        const { stop_predicate } = stop;
+    public async pull(stop: Q | StopCondition) {
+        let stopCondition: StopCondition;
+        if (stop instanceof Q) {
+            const q = stop;
+            stopCondition = Object.assign({ stop_predicate: data => q.stopCondition(data) } as StopCondition, q.inferenceParams ?? {});
+        } else {
+            stopCondition = stop;
+        }
+        const { stop_predicate } = stopCondition;
+        await this.client.exec("line_init", { line_id: this.lineId, inference: stripField(stopCondition, "stop_predicate") });
         let packed: PackedTokens = { content: [] };
         let packedTokens: Token[] = [];
         let endPos: number | undefined = undefined;
+        let textFull = "";
         const { tokens, entropy, next, stopReasons } = await this.pullRaw(
             () => this.client.exec("line_start", { line_id: this.lineId }),
             stop_predicate === undefined ? undefined : (events => {
                 const last = events.at(-1);
                 const eventsTokens = events.flatMap(e => e.input);
                 const unpackedTokens = eventsTokens.slice(packedTokens.length);
+                textFull += unpackedTokens.map(e => e.piece).join("");
                 packed = packTokens(unpackedTokens, packed);
                 packedTokens = eventsTokens;
-                if (last === undefined || stop_predicate({
+                if (last === undefined || last.stop || stop_predicate({
                     tokensRecieved: eventsTokens,
                     tokensRecievedNow: unpackedTokens,
                     content: packed.content,
                     text: packed.text,
+                    textSpecial: textFull,
                     entropy: last.entropy,
                     next: last.next,
                     stopReasons: last.stopReasons,
@@ -124,8 +135,9 @@ export class ClientLine {
                 })) {
                     endPos = eventsTokens.length;
                     this.client.exec("line_stop", { line_id: this.lineId }).catch(e => { throw e; });
+                    return true;
                 }
-                return !!last?.stop;
+                return false;
             })
         );
         if (endPos !== undefined) {
@@ -225,3 +237,96 @@ export class ClientLine {
         await this.client.exec("line_free", { line_id: this.lineId });
     }
 }
+
+export type QRegexOptions = {
+    special_token?: "restart_regex" | "end_regex" | "include" | undefined,
+};
+export type QSubstringOptions = QRegexOptions & {
+    ignore_case?: boolean | undefined,
+};
+export type QOnMatch = (data: StopPredicateArg, m: RegExpExecArray, source: { tokens: Token[] } & PackedTokens) => Q | undefined | boolean;
+export class Q {
+    public constructor(
+        public readonly stopCondition: StopCondition["stop_predicate"] extends (infer T) | undefined ? T : never,
+        public readonly inferenceParams?: InferenceLineParams | undefined,
+    ) { }
+    public static some(...conditions: Q[]) {
+        return new Q(data => conditions.some(e => e.stopCondition(data)));
+    }
+    public static every(...conditions: Q[]) {
+        return new Q(data => conditions.every(e => e.stopCondition(data)));
+    }
+    public not() {
+        return new Q(data => !this.stopCondition(data));
+    }
+    public with(inferenceParams: InferenceLineParams) {
+        return new Q(this.stopCondition, inferenceParams);
+    }
+    public static regex(pattern: RegExp, onMatch: QOnMatch, options: QRegexOptions = {}) {
+        pattern = new RegExp(pattern.source, pattern.flags);
+        const spToken = options.special_token ?? "restart_regex";
+        const global = pattern.flags.includes("g");
+        let end = false;
+        return new Q(data => {
+            const { textSpecial, tokensRecieved, tokensRecievedNow } = data;
+            let text = data.text ?? "";
+            if (end) {
+                return false;
+            }
+            let tokens = tokensRecieved;
+            let packed = { content: data.content, text };
+            if (tokensRecievedNow.some(e => e.special)) {
+                const endIndex = tokensRecieved.length - tokensRecievedNow.length;
+                const lastSpecialIndex = tokensRecieved.findLastIndex(e => e.special);
+                const startIndex = lastSpecialIndex === -1 ? 0 : lastSpecialIndex + 1;
+                const firstSpecialIndex = tokensRecievedNow.findIndex(e => e.special);
+                const endIndexNew = firstSpecialIndex === -1 ? tokensRecievedNow.length : firstSpecialIndex;
+                tokens = [...tokensRecieved.slice(startIndex, endIndex), ...tokensRecievedNow.slice(0, endIndexNew)];
+                const packed = packTokens(tokens);
+                text = packed.text ?? "";
+            }
+            try {
+                const last = pattern.lastIndex;
+                const m = pattern.exec(spToken === "include" ? textSpecial : text);
+                if (m === null) {
+                    pattern.lastIndex = last;
+                    return false;
+                } else {
+                    if (!global) {
+                        end = true;
+                    }
+                    const res = onMatch(data, m, Object.assign({ tokens }, packed)) ?? false;
+                    if (typeof res === "boolean") {
+                        return res;
+                    } else if (res instanceof Q) {
+                        return res.stopCondition(data);
+                    } else {
+                        throw new Error(`unexpected situation: expected bool|Q`);
+                    }
+                }
+            } finally {
+                if (tokensRecievedNow.some(e => e.special)) {
+                    if (spToken === "restart_regex") {
+                        pattern.lastIndex = 0;
+                    } else if (spToken === "end_regex") {
+                        end = true;
+                    }
+                }
+            }
+        });
+    }
+    public static substring(s: string, onMatch: QOnMatch, options: QSubstringOptions) {
+        return this.regex(new RegExp(s.replaceAll(/[\\^$.|?*+()\[\]{}]/g, s => "\\" + s), options.ignore_case ? "gi" : "g"), onMatch, { special_token: options.special_token });
+    }
+    public static cond(stopCondition: Q["stopCondition"]) {
+        return new Q(stopCondition);
+    }
+}
+
+
+
+
+
+
+
+//

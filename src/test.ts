@@ -1,4 +1,5 @@
-import { ClientLine, ModelClient } from './client.js';
+import { ModelClient } from './client.js';
+import { ClientLine } from './client-line.js';
 
 const client = await ModelClient.create({
     conn: { port: 32256 },
@@ -9,7 +10,6 @@ const client = await ModelClient.create({
             check_tensors: false,
             main_gpu: 1,
             n_gpu_layers: 999,
-            split_mode: "none",
         },
         stderr: "inherit",
         stdout: "inherit",
