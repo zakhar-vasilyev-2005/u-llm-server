@@ -99,11 +99,11 @@ export class ClientLine {
         this.unparsedContent = next === null ? [] : [{ tokens: [next.token] }];
         return { tokens, entropy, next, stopReasons } as TokenSequence;
     }
-    public async pull(stop: Q | StopCondition) {
+    public async pull(stop: RQ | StopCondition) {
         let stopCondition: StopCondition;
-        if (stop instanceof Q) {
+        if (stop instanceof RQ) {
             const q = stop;
-            stopCondition = Object.assign({ stop_predicate: data => q.stopCondition(data) } as StopCondition, q.inferenceParams ?? {});
+            stopCondition = Object.assign({ stop_predicate: data => q.run(data) } as StopCondition, q.inferenceParams ?? {});
         } else {
             stopCondition = stop;
         }
@@ -238,36 +238,59 @@ export class ClientLine {
     }
 }
 
-export type QRegexOptions = {
+export type RQRegexOptions = {
     special_token?: "restart_regex" | "end_regex" | "include" | undefined,
 };
-export type QSubstringOptions = QRegexOptions & {
+export type RQSubstringOptions = RQRegexOptions & {
     ignore_case?: boolean | undefined,
 };
-export type QOnMatch = (data: StopPredicateArg, m: RegExpExecArray, source: { tokens: Token[] } & PackedTokens) => Q | undefined | boolean;
-export class Q {
+export type RQOnMatch = (data: StopPredicateArg, m: RegExpExecArray, source: { tokens: Token[] } & PackedTokens) => RQ | undefined | boolean;
+export class RQ {
+    public path: string[] = [];
     public constructor(
-        public readonly stopCondition: StopCondition["stop_predicate"] extends (infer T) | undefined ? T : never,
-        public readonly inferenceParams?: InferenceLineParams | undefined,
+        public readonly stopCondition: (this: RQ, ...args: Parameters<StopCondition["stop_predicate"] extends (infer T) | undefined ? T : never>) => boolean,
+        public readonly inferenceParams: InferenceLineParams = {},
     ) { }
-    public static some(...conditions: Q[]) {
-        return new Q(data => conditions.some(e => e.stopCondition(data)));
+    public static some(...conditions: RQ[]) {
+        return new RQ(function (data) {
+            return conditions.some((e, i) => {
+                if (e.stopCondition(data)) {
+                    this.path.unshift(`some-${i}`);
+                    return true;
+                }
+                return false;
+            });
+        });
     }
-    public static every(...conditions: Q[]) {
-        return new Q(data => conditions.every(e => e.stopCondition(data)));
+    public static every(...conditions: RQ[]) {
+        return new RQ(function (data) {
+            return conditions.every((e, i) => {
+                if (e.stopCondition(data)) {
+                    this.path.unshift(`every-${i}`);
+                    return true;
+                }
+                return false;
+            });
+        });
     }
     public not() {
-        return new Q(data => !this.stopCondition(data));
+        return new RQ(function (data) {
+            if (!this.stopCondition(data)) {
+                this.path.unshift("not");
+                return true;
+            }
+            return false;
+        });
     }
     public with(inferenceParams: InferenceLineParams) {
-        return new Q(this.stopCondition, inferenceParams);
+        return new RQ(this.stopCondition, Object.assign(this.inferenceParams, inferenceParams));
     }
-    public static regex(pattern: RegExp, onMatch: QOnMatch, options: QRegexOptions = {}) {
+    public static regex(pattern: RegExp, onMatch: RQOnMatch, options: RQRegexOptions = {}) {
         pattern = new RegExp(pattern.source, pattern.flags);
         const spToken = options.special_token ?? "restart_regex";
         const global = pattern.flags.includes("g");
         let end = false;
-        return new Q(data => {
+        const stopCondition: RQ["stopCondition"] = data => {
             const { textSpecial, tokensRecieved, tokensRecievedNow } = data;
             let text = data.text ?? "";
             if (end) {
@@ -298,7 +321,7 @@ export class Q {
                     const res = onMatch(data, m, Object.assign({ tokens }, packed)) ?? false;
                     if (typeof res === "boolean") {
                         return res;
-                    } else if (res instanceof Q) {
+                    } else if (res instanceof RQ) {
                         return res.stopCondition(data);
                     } else {
                         throw new Error(`unexpected situation: expected bool|Q`);
@@ -313,13 +336,34 @@ export class Q {
                     }
                 }
             }
+        };
+        return new RQ(function (data) {
+            if (stopCondition.call(this, data)) {
+                this.path.unshift("regex");
+                return true;
+            }
+            return false;
         });
     }
-    public static substring(s: string, onMatch: QOnMatch, options: QSubstringOptions) {
+    public static substring(s: string, onMatch: RQOnMatch, options: RQSubstringOptions) {
         return this.regex(new RegExp(s.replaceAll(/[\\^$.|?*+()\[\]{}]/g, s => "\\" + s), options.ignore_case ? "gi" : "g"), onMatch, { special_token: options.special_token });
     }
-    public static cond(stopCondition: Q["stopCondition"]) {
-        return new Q(stopCondition);
+    public static cond(stopCondition: RQ["stopCondition"]) {
+        return new RQ(function (data) {
+            if (stopCondition.call(this, data)) {
+                this.path.unshift("cond");
+                return true;
+            }
+            return false;
+        });
+    }
+    public async pull(line: ClientLine, inferenceParams: InferenceLineParams) {
+        this.path = [];
+        const result = await line.pull(this.with(inferenceParams));
+        return Object.assign(result, { stopPath: this.path });
+    }
+    public run(data: StopPredicateArg) {
+        return this.stopCondition(data);
     }
 }
 
