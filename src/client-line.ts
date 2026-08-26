@@ -256,7 +256,6 @@ export type RQResultInference = {
 };
 export type RQType<T extends RQ<string>> = T extends RQ<infer V> ? V : never;
 export type RQTypeList<T extends RQ<string>[] | []> = { [k in keyof T]: RQType<T[k]> } & unknown[];
-export type RQTypeOfCallback<T extends RQCallback<string>> = ReturnType<T> extends RQCallbackResult<infer V> ? V : never;
 export type RQResultsOfEvery<P extends RQ<string>[] | []> = { [k in keyof P]: P[k] extends RQ<infer V> ? Omit<RQResult<V>, "result"> : never } & unknown[];
 export class RQ<T extends string> {
     public static stoppedByInferenceParams = Symbol("reasonNotSet");
