@@ -247,7 +247,7 @@ export type RQResult<T> = {
     result: PullResult,
 };
 export type RQResultInference = {
-    reason?: unknown,
+    reason?: undefined,
     result: PullResult,
 };
 export type RQType<T extends RQ<unknown>> = T extends RQ<infer V> ? V : never;
