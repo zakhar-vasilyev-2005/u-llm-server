@@ -239,28 +239,24 @@ export type RQRegexOptions = {
 export type RQSubstringOptions = RQRegexOptions & {
     ignore_case?: boolean | undefined,
 };
-export type RQOnMatch<T extends string> = (data: StopPredicateArg, m: RegExpExecArray, source: { tokens: Token[] } & PackedTokens) => RQCallbackResult<T>;
-export type RQOnEvery<T extends string, P extends RQ<string>[] | []> = (data: StopPredicateArg, results: RQResultsOfEvery<P>) => RQCallbackResult<T>;
-export type RQCallback<T extends string> = (data: StopPredicateArg) => RQCallbackResult<T>;
-export type RQCallbackResult<T extends string> = RQ<T> | T | RQRunResult<T>;
-export type RQRunResult<T extends string> = null | Omit<RQResult<T>, "result">;
-export type RQResult<T extends string> = {
+export type RQOnMatch<T> = (data: StopPredicateArg, m: RegExpExecArray, source: { tokens: Token[] } & PackedTokens) => RQ<T> | T | undefined;
+export type RQOnEvery<T, P extends RQ<unknown>[] | []> = (data: StopPredicateArg, results: RQResultsOfEvery<P>) => RQ<T> | T | undefined;
+export type RQCallback<T> = (data: StopPredicateArg) => RQ<T> | T | undefined;
+export type RQResult<T> = {
     reason: T,
     result: PullResult,
-    data?: Record<string | number, unknown> | undefined,
 };
 export type RQResultInference = {
-    reason?: never,
+    reason?: unknown,
     result: PullResult,
-    data?: never,
 };
-export type RQType<T extends RQ<string>> = T extends RQ<infer V> ? V : never;
-export type RQTypeList<T extends RQ<string>[] | []> = { [k in keyof T]: RQType<T[k]> } & unknown[];
-export type RQResultsOfEvery<P extends RQ<string>[] | []> = { [k in keyof P]: P[k] extends RQ<infer V> ? Omit<RQResult<V>, "result"> : never } & unknown[];
-export class RQ<T extends string> {
+export type RQType<T extends RQ<unknown>> = T extends RQ<infer V> ? V : never;
+export type RQTypeList<T extends RQ<unknown>[] | []> = { [k in keyof T]: RQType<T[k]> } & unknown[];
+export type RQResultsOfEvery<P extends RQ<unknown>[] | []> = { [k in keyof P]: P[k] extends RQ<infer V> ? Omit<RQResult<V>, "result"> : never } & unknown[];
+export class RQ<const T> {
     public static stoppedByInferenceParams = Symbol("reasonNotSet");
     public constructor(public readonly cb: RQCallback<T>) { }
-    public static some<T extends RQ<string>[] | []>(conditions: T): RQ<RQTypeList<T>[number]> {
+    public static some<const T extends RQ<unknown>[] | []>(conditions: T): RQ<RQTypeList<T>[number]> {
         return new RQ(function (data) {
             for (const rq of conditions as RQ<RQTypeList<T>[number]>[]) {
                 const res = rq.run(data);
@@ -268,16 +264,16 @@ export class RQ<T extends string> {
                     return res;
                 }
             }
-            return null;
+            return;
         });
     }
-    public static every<T extends string, P extends RQ<string>[] | []>(conditions: P, cb: RQOnEvery<T, P>): RQ<T> {
+    public static every<const T, const P extends RQ<unknown>[] | []>(conditions: P, cb: RQOnEvery<T, P>): RQ<T> {
         return new RQ(function (data) {
             const results = conditions.map(e => e.run(data));
-            return results.every(e => e !== null) ? cb(data, results as any) : null;
+            return results.every(e => e !== null) ? cb(data, results as any) : undefined;
         });
     }
-    public static regex<T extends string>(pattern: RegExp, onMatch: RQOnMatch<T>, options: RQRegexOptions = {}): RQ<T> {
+    public static regex<const T>(pattern: RegExp, onMatch: RQOnMatch<T>, options: RQRegexOptions = {}): RQ<T> {
         pattern = new RegExp(pattern.source, pattern.flags);
         const spToken = options.special_token ?? "restart_regex";
         const global = pattern.flags.includes("g");
@@ -287,7 +283,7 @@ export class RQ<T extends string> {
             const { textSpecial, tokensRecieved, tokensRecievedNow } = data;
             let text = data.text ?? "";
             if (end) {
-                return null;
+                return;
             }
             let tokens = tokensRecieved;
             let packed = { content: data.content, text };
@@ -306,7 +302,7 @@ export class RQ<T extends string> {
                 lastMatch = pattern.exec(spToken === "include" ? textSpecial : text);
                 if (lastMatch === null) {
                     pattern.lastIndex = last;
-                    return null;
+                    return;
                 } else {
                     if (!global) {
                         end = true;
@@ -324,57 +320,47 @@ export class RQ<T extends string> {
             }
         });
     }
-    public static substring<T extends string>(s: string, onMatch: RQOnMatch<T>, options: RQSubstringOptions = {}): RQ<T> {
+    public static substring<const T>(s: string, onMatch: RQOnMatch<T>, options: RQSubstringOptions = {}): RQ<T> {
         return this.regex(new RegExp(s.replaceAll(/[\\^$.|?*+()\[\]{}]/g, s => "\\" + s), options.ignore_case ? "gi" : "g"), onMatch, { special_token: options.special_token });
     }
-    public static eog<T extends string>(cb: RQCallback<T>): RQ<T> {
+    public static eog<const T>(cb: RQCallback<T>): RQ<T> {
         return this.cond(function (data) {
-            return (data.next !== null && !!data.line.client.modelTokenInfo[data.next.token]?.eog) ? cb(data) : null;
+            return (data.next !== null && !!data.line.client.modelTokenInfo[data.next.token]?.eog) ? cb(data) : undefined;
         });
     }
-    public static tokens<T extends string>(cond: (tokens: number) => boolean, cb: RQCallback<T>): RQ<T> {
+    public static tokens<const T>(cond: (tokens: number) => boolean, cb: RQCallback<T>): RQ<T> {
         return this.cond(function (data) {
-            return cond(data.tokensRecieved.length) ? cb(data) : null
+            return cond(data.tokensRecieved.length) ? cb(data) : undefined;
         });
     }
-    public static symbols<T extends string>(cond: (symbols: number) => boolean, cb: RQCallback<T>): RQ<T> {
+    public static symbols<const T>(cond: (symbols: number) => boolean, cb: RQCallback<T>): RQ<T> {
         return this.cond(function (data) {
-            return cond(data.text?.length ?? 0) ? cb(data) : null
+            return cond(data.text?.length ?? 0) ? cb(data) : undefined;
         });
     }
-    public static symbolsAll<T extends string>(cond: (symbols: number) => boolean, cb: RQCallback<T>): RQ<T> {
+    public static symbolsAll<const T>(cond: (symbols: number) => boolean, cb: RQCallback<T>): RQ<T> {
         return this.cond(function (data) {
-            return cond(data.textSpecial.length) ? cb(data) : null
+            return cond(data.textSpecial.length) ? cb(data) : undefined;
         });
     }
-    public static cond<T extends RQCallback<K>, K extends string>(cb: T): RQ<K> {
+    public static cond<const T extends RQCallback<K>, const K>(cb: T): RQ<T extends RQCallback<infer V> ? V : never> {
         return new RQ(cb) as any;
     }
     public async pull(line: ClientLine, inferenceParams: InferenceLineParams = {}): Promise<RQResult<T> | RQResultInference> {
-        let base: Omit<RQResult<T>, "result"> | undefined = undefined;
+        let reason: T | undefined = undefined;
         const result = await line.pull(Object.assign({
             stop_predicate: (data: StopPredicateArg) => {
-                const res = this.run(data);
-                if (res === null) {
-                    return false;
-                } else {
-                    base = res;
-                    return true;
-                }
+                reason = this.run(data);
+                return reason !== undefined;
             }
         }, inferenceParams));
-        if (base === undefined) {
-            return { result };
-        } else {
-            return Object.assign({ result }, base) as RQResult<T>;
-        }
+        return { reason, result };
     }
-    public run(data: StopPredicateArg): RQRunResult<T> {
+    public run(data: StopPredicateArg): T | undefined {
         const res = this.cb(data);
-        return res instanceof RQ ? this.run(data) : typeof res === "string" ? { reason: res } : res;
+        return res instanceof RQ ? this.run(data) : res;
     }
 }
-
 
 
 
