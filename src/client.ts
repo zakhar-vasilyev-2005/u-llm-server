@@ -96,15 +96,15 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             errBuffer.forEach(errRouter);
             socket.on("error", errRouter);
             const { metadata, tokeninfo, model_params } = await client.exec("start", null);
-            Object.freeze(Object.assign(client.modelMetadata, metadata));
-            Object.freeze(Object.assign(client.modelTokenInfo, tokeninfo));
-            Object.freeze(Object.assign(client.modelParams, model_params));
+            Object.assign(client.modelMetadata, metadata);
+            Object.assign(client.modelTokenInfo, tokeninfo);
+            Object.assign(client.modelParams, model_params);
             const tempalteStr = metadata["tokenizer.chat_template"];
             if (tempalteStr === undefined) {
                 throw new Error(`cannot extract model's template from metadata`);
             }
             Object.assign(client.template, new Template(tempalteStr));
-            Object.freeze(Object.assign(client.prefixes, client.createPrefixes()));
+            Object.assign(client.prefixes, client.createPrefixes());
             return client;
         } else {
             const errTimeout = new Error(`connection timed out`);
@@ -186,6 +186,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             assistantToUser: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "\uE000" }, { role: "user", content: "\uE001" }] }),
             toolToAssistant: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "..." }, { role: "tool", content: "\uE000" }, { role: "assistant", content: "\uE001" }] }),
             assistantToTool: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "\uE000" }, { role: "tool", content: "\uE001" }] }),
+            generationPrompt: this.scheme({ messages: [{ role: "user", content: "...\uE000" }], add_generation_prompt: true })
         };
     }
     public readonly prefixes: ReturnType<ModelClient["createPrefixes"]>;
