@@ -186,7 +186,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             assistantToUser: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "\uE000" }, { role: "user", content: "\uE001" }] }),
             toolToAssistant: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "..." }, { role: "tool", content: "\uE000" }, { role: "assistant", content: "\uE001" }] }),
             assistantToTool: this.scheme({ messages: [{ role: "user", content: "..." }, { role: "assistant", content: "\uE000" }, { role: "tool", content: "\uE001" }] }),
-            generationPrompt: this.scheme({ messages: [{ role: "user", content: "...\uE000" }], add_generation_prompt: true })
+            userToGeneration: this.scheme({ messages: [{ role: "user", content: "...\uE000" }], add_generation_prompt: true }),
         };
     }
     public readonly prefixes: ReturnType<ModelClient["createPrefixes"]>;
