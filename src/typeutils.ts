@@ -14,7 +14,7 @@ export type StripUndefined<T extends object> = StripType<T, undefined>;
 export type UnknownRecord = Record<string | symbol | number, unknown>;
 export type AnyRecord = Record<string | symbol | number, any>;
 
-export function stripUndefined<T extends object>(object: T): StripUndefined<T> {
+export function stripUndefined<const T extends object>(object: T): StripUndefined<T> {
     const result: UnknownRecord = {};
     for (const k of [...Object.getOwnPropertyNames(object), ...Object.getOwnPropertySymbols(object)]) {
         if ((object as UnknownRecord)[k] !== undefined) {
@@ -23,7 +23,7 @@ export function stripUndefined<T extends object>(object: T): StripUndefined<T> {
     }
     return result as any;
 }
-export function stripField<T extends object, K extends string | number | symbol>(object: T, key: K): Omit<T, K> {
+export function stripField<const T extends object, const K extends string | number | symbol>(object: T, key: K): Omit<T, K> {
     const result = Object.assign({}, object) as UnknownRecord;
     if (key in result) {
         delete result[key];

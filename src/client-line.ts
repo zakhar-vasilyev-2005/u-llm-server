@@ -1,11 +1,9 @@
 import { type SamplerConstructor } from "./llama-base.js";
-import { SEventArgs, SToken } from './server-schemas.js';
+import { SEventArgs } from './server-schemas.js';
 import * as z from "zod";
 import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
-import type { ModelClient, TemplateInput } from "./client.js";
+import type { ContentElem, ModelClient, Token } from "./client.js";
 import { stripField } from "./typeutils.js";
-import { expectDefined } from "./expect.js";
-import { GrowBuffer } from "./growbuffer.js";
 
 
 
@@ -30,7 +28,6 @@ export function packTokens(tokens: Token[], prevState: PackedTokens = { content:
     const text = content.findLast(e => typeof e === "string");
     return { content, text };
 }
-export type Token = z.output<typeof SToken>;
 export type TokensEvent = z.output<typeof SEventArgs["tokens"]>;
 export type TokenSequence = {
     tokens: Token[],
@@ -53,7 +50,6 @@ export type StopPredicateArg = {
 export type StopCondition = InferenceLineParams & {
     stop_predicate?: ((data: StopPredicateArg) => boolean) | undefined,
 };
-export type ContentElem = string | number | number[] | InputElem | TemplateInput;
 
 
 export type PullResult = PackedTokens & TokenSequence;
@@ -284,7 +280,7 @@ export class CachedLine {
                 if (token === undefined) {
                     input.unshift(elem);
                     break;
-                } else if (elem.special !== token.special) {
+                } else if (token.special && !elem.special) {
                     unshift(token);
                     input.unshift(elem);
                     break;
@@ -293,7 +289,7 @@ export class CachedLine {
                     input.unshift(elem);
                     continue;
                 } else if (token.piece.startsWith(elem.text)) {
-                    unshift({ special: token.special, piece: token.piece.slice(elem.text.length) });
+                    unshift({ special: token.special || elem.special, piece: token.piece.slice(elem.text.length) });
                     continue;
                 } else {
                     unshift(token);

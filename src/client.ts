@@ -1,6 +1,6 @@
 import path from "path";
 import { type ModelParamsSerialized } from "./llama-base.js";
-import { SResultArgs, SCommandArgs, SEventArgs, SMessageSchema, type SCommand, type SMessage } from './server-schemas.js';
+import { SResultArgs, SCommandArgs, SEventArgs, SMessageSchema, type SCommand, type SMessage, SToken } from './server-schemas.js';
 import { createConnection, Socket, type NetConnectOpts } from "net";
 import { EventEmitter } from "events";
 import * as z from "zod";
@@ -13,10 +13,10 @@ import type Stream from "stream";
 import type { ConnOption } from "./server.js";
 import type { Serializable } from "./serializable.js";
 import type { TokenInfo } from "./tokeninfo-base.js";
-import type { ContentElem } from "./client-line.js";
 import { expectDefined } from "./expect.js";
 import { GrowBuffer } from "./growbuffer.js";
 import type { InputElem } from "./model.js";
+import { stripUndefined } from "./typeutils.js";
 
 export const defaultTemplateString = `
 {{- bos_token }}
@@ -54,6 +54,9 @@ export type TemplateInput = {
     }[],
     [k: string | number]: Serializable,
 };
+export type Token = z.output<typeof SToken>;
+export type ContentElemBase = string | number | Int32Array | Token | InputElem | TemplateInput;
+export type ContentElem = ContentElemBase | ContentElemBase[];
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 export class ModelClient extends EventEmitter<ModelClientEvents> {
     public static async create(params: ModelClientParams) {
@@ -222,8 +225,36 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         return { special: true, text: content };
     }
     public parse(...content: ContentElem[]) {
-        return content.flatMap(raw => {
-            const elem = parseContentElem(raw);
+        const elems = (content
+            .flatMap(e => e instanceof Array ? e : [e])
+            .map(e => {
+                if (typeof e === "string") {
+                    return { special: false, text: e };
+                } else if (typeof e === "number") {
+                    return { tokens: [e] };
+                } else if ("messages" in e) {
+                    return this.scheme(e);
+                } else if ("piece" in e) {
+                    return { special: e.special, text: e.piece };
+                } else if (e instanceof Int32Array) {
+                    return { tokens: [...e] };
+                } else {
+                    return e;
+                }
+            })
+        ) as InputElem[];
+        const input: InputElem[] = [];
+        for (const elem of elems) {
+            const last = input.at(-1);
+            if (last?.tokens !== undefined && elem.tokens !== undefined) {
+                input.pop();
+                last.tokens.push(...elem.tokens);
+                input.push(last);
+            } else {
+                input.push(elem);
+            }
+        }
+        const pieces = input.flatMap(elem => {
             if (elem.tokens === undefined) {
                 return [elem];
             } else {
@@ -246,6 +277,18 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                 return pieces;
             }
         });
+        const result: typeof pieces = [];
+        for (const piece of pieces) {
+            const last = result.at(-1);
+            if (last?.special === piece.special) {
+                result.pop();
+                last.text += piece.text;
+                result.push(last);
+            } else {
+                result.push(piece);
+            }
+        }
+        return result;
     }
     public async closeServer() {
         await this.exec("exit", null);
@@ -256,12 +299,6 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
     });
 }
 
-export function parseContentElem(e: ContentElem): InputElem {
-    if (typeof e === "string") { return { special: false, text: e }; }
-    if (e instanceof Array) { return { tokens: [...e] }; }
-    if (typeof e === "number") { return { tokens: [e] }; }
-    return { special: e.special, text: e.text };
-}
 
 
 
