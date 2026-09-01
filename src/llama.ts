@@ -230,6 +230,7 @@ export class Model extends EventEmitter<ModelEvents> {
     protected generating: Promise<void> | null = null;
     public isGenerating() { return this.generating !== null; }
     public start() {
+        if (this.generating !== null) { return; }
         this.stopFlag.set(0);
         this.emit("generation_started");
         this.generating = this.worker.api.start({
@@ -280,13 +281,13 @@ export class ModelLine extends EventEmitter<LineEvents> {
         this.content = this.content.slice(0, this.content.length - nTokens);
     }
     public async start() {
-        await this.model.stop();
         this.enabled = true;
+        await this.model.stop();
         this.model.start();
     }
     public async stop() {
-        await this.model.stop();
         this.enabled = false;
+        await this.model.stop();
         if (this.model.lines.some(e => e.enabled)) {
             this.model.start();
         }

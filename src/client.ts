@@ -13,6 +13,10 @@ import type Stream from "stream";
 import type { ConnOption } from "./server.js";
 import type { Serializable } from "./serializable.js";
 import type { TokenInfo } from "./tokeninfo-base.js";
+import type { ContentElem } from "./client-line.js";
+import { expectDefined } from "./expect.js";
+import { GrowBuffer } from "./growbuffer.js";
+import type { InputElem } from "./model.js";
 
 export const defaultTemplateString = `
 {{- bos_token }}
@@ -217,7 +221,32 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         }
         return { special: true, text: content };
     }
-
+    public parse(...content: ContentElem[]) {
+        return content.flatMap(raw => {
+            const elem = parseContentElem(raw);
+            if (elem.tokens === undefined) {
+                return [elem];
+            } else {
+                const tokens = elem.tokens.map(t => expectDefined(this.modelTokenInfo[t]));
+                let pieces: { special: boolean, text: string }[] = [];
+                let buf = new GrowBuffer(100);
+                let special = false
+                const flush = () => {
+                    pieces.push({ special, text: buf.buffer.toString("utf8") });
+                    buf.clear(100);
+                };
+                for (const token of tokens) {
+                    if (token.special !== special) {
+                        flush();
+                        special = token.special;
+                    }
+                    buf.push(Buffer.from(token.pieceBytesBase64, "base64"));
+                }
+                flush();
+                return pieces;
+            }
+        });
+    }
     public async closeServer() {
         await this.exec("exit", null);
         await this.close();
@@ -227,6 +256,12 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
     });
 }
 
+export function parseContentElem(e: ContentElem): InputElem {
+    if (typeof e === "string") { return { special: false, text: e }; }
+    if (e instanceof Array) { return { tokens: [...e] }; }
+    if (typeof e === "number") { return { tokens: [e] }; }
+    return { special: e.special, text: e.text };
+}
 
 
 

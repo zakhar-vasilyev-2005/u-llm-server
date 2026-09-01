@@ -4,6 +4,8 @@ import * as z from "zod";
 import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
 import type { ModelClient, TemplateInput } from "./client.js";
 import { stripField } from "./typeutils.js";
+import { expectDefined } from "./expect.js";
+import { GrowBuffer } from "./growbuffer.js";
 
 
 
@@ -144,17 +146,8 @@ export class ClientLine {
         await this.cancel();
         return { content: packed.content, tokens, text: packed.text, entropy, next, stopReasons } as PullResult; 1.
     }
-    public static parseContent(e: ContentElem): InputElem {
-        if (typeof e === "string") { return { special: false, text: e }; }
-        if (e instanceof Array) { return { tokens: [...e] }; }
-        if (typeof e === "number") { return { tokens: [e] }; }
-        return { special: e.special, text: e.text };
-    }
     public async resetConfig(...content: ContentElem[]) {
-        const pieces = await Promise.all(content.map(ClientLine.parseContent).map(e => e?.tokens !== undefined
-            ? this.client.exec("detokenize", { tokens: e.tokens, unparse_special: true }).then(e => ({ text: e.text, special: true }))
-            : e
-        )) as { text: string, special: boolean }[];
+        const pieces = this.client.parse(...content);
         let nKeep: number = 0;
         for (const token of this.tokens) {
             const piece = pieces.shift();
@@ -178,7 +171,7 @@ export class ClientLine {
         await this.push(...input);
     }
     public async push(...content: ContentElem[]) {
-        const elems = content.map(ClientLine.parseContent);
+        const elems = this.client.parse(...content);
         await this.client.exec('line_push', { line_id: this.lineId, content: elems });
         this.unparsedContent.push(...elems);
     }
@@ -233,6 +226,110 @@ export class ClientLine {
     }
 }
 
+export type CachedLinePullParams<T> = {
+    query?: RQ<T> | undefined,
+    sampler?: SamplerConstructor | undefined,
+    inference: InferenceLineParams | undefined,
+};
+export class CachedLine {
+    public tokens: Token[] = [];
+    public allTokens: Token[] = [];
+    public static async create(client: ModelClient, lineId?: string | undefined) {
+        return new CachedLine(await ClientLine.create(client, lineId));
+    }
+    public constructor(public readonly origin: ClientLine) { }
+    public async load(file: string) {
+        await this.origin.loadContent(file);
+        this.tokens = this.allTokens = this.origin.tokens;
+    }
+    public async save(file: string) {
+        await this.origin.saveContent(file);
+    }
+    public async pull<T>(params: CachedLinePullParams<T>) {
+        await this.cancel();
+        await this.origin.setSampler(params.sampler ?? [{ type: "greedy" }], this.origin.tokens.length);
+        const result = await (params.query ?? RQ.never()).pull(this.origin, params.inference);
+        await this.origin.setSampler([{ type: "greedy" }], this.origin.tokens.length);
+        return result;
+    }
+    public async step(...content: ContentElem[]) {
+        const input = this.origin.client.parse(...content);
+        let index = 0;
+        let prefix = [] as { token?: number | undefined, piece: string, special: boolean }[];
+        const shift = () => {
+            const prefixElem = prefix.shift();
+            if (prefixElem === undefined) {
+                return this.allTokens[this.tokens.length + index++];
+            } else {
+                return prefixElem;
+            }
+        };
+        const unshift = (e: { token?: number | undefined, piece: string, special: boolean }) => {
+            const lastToken = this.allTokens[this.tokens.length + index - 1]?.token;
+            if (lastToken !== undefined && e.token === lastToken) {
+                index--;
+            } else {
+                prefix.unshift(e);
+            }
+        };
+        while (true) {
+            const token = shift();
+            const elem = input.shift();
+            if (elem === undefined) {
+                if (token !== undefined) {
+                    unshift(token);
+                }
+                break;
+            } else {
+                if (token === undefined) {
+                    input.unshift(elem);
+                    break;
+                } else if (elem.special !== token.special) {
+                    unshift(token);
+                    input.unshift(elem);
+                    break;
+                } else if (elem.text.startsWith(token.piece)) {
+                    elem.text = elem.text.slice(token.piece.length);
+                    input.unshift(elem);
+                    continue;
+                } else if (token.piece.startsWith(elem.text)) {
+                    unshift({ special: token.special, piece: token.piece.slice(elem.text.length) });
+                    continue;
+                } else {
+                    unshift(token);
+                    input.unshift(elem);
+                    break;
+                }
+            }
+        }
+        const keep = Math.max(0, index - prefix.length);
+        this.tokens.push(...this.allTokens.slice(this.tokens.length, this.tokens.length + keep));
+        await this.cancel();
+        if (input.length !== 0) {
+            await this.origin.step(...input);
+            this.tokens = [...this.origin.tokens];
+            this.allTokens = [...this.origin.tokens];
+        }
+    }
+    public async cancel() {
+        await this.origin.goto(this.tokens.length);
+        this.allTokens = [...this.tokens];
+    }
+    public async goto(nTokens: number) {
+        if (nTokens <= this.allTokens.length) {
+            this.tokens = this.allTokens.slice(0, nTokens);
+        } else {
+            throw new Error(`cannot goto beyond currently generated amount of tokens`);
+        }
+    }
+    public async clear() {
+        await this.goto(0);
+    }
+    public async free() {
+        await this.origin.free();
+    }
+}
+
 export type RQRegexOptions = {
     special_token?: "restart_regex" | "end_regex" | "include" | undefined,
 };
@@ -256,6 +353,9 @@ export type RQResultsOfEvery<P extends RQ<unknown>[] | []> = { [k in keyof P]: P
 export class RQ<const T> {
     public static stoppedByInferenceParams = Symbol("reasonNotSet");
     public constructor(public readonly cb: RQCallback<T>) { }
+    public static never() {
+        return this.cond(() => undefined) as RQ<never>;
+    }
     public static some<const T extends RQ<unknown>[] | []>(conditions: T): RQ<RQTypeList<T>[number]> {
         return new RQ(function (data) {
             for (const rq of conditions as RQ<RQTypeList<T>[number]>[]) {
