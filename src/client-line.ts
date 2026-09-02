@@ -225,7 +225,7 @@ export class ClientLine {
 export type CachedLinePullParams<T> = {
     query?: RQ<T> | undefined,
     sampler?: SamplerConstructor | undefined,
-    inference: InferenceLineParams | undefined,
+    inference?: InferenceLineParams | undefined,
 };
 export class CachedLine {
     public tokens: Token[] = [];
