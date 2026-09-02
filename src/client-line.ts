@@ -3,7 +3,8 @@ import { SEventArgs } from './server-schemas.js';
 import * as z from "zod";
 import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
 import type { ContentElem, ModelClient, Token } from "./client.js";
-import { stripField } from "./typeutils.js";
+import { blendObjects, stripFields } from "./typeutils.js";
+import { samplerWithSeed } from "./sampler-seed.js";
 
 
 
@@ -100,7 +101,7 @@ export class ClientLine {
     }
     public async pull(stopCondition: StopCondition) {
         const { stop_predicate } = stopCondition;
-        await this.client.exec("line_init", { line_id: this.lineId, inference: stripField(stopCondition, "stop_predicate") });
+        await this.client.exec("line_init", { line_id: this.lineId, inference: stripFields(stopCondition, "stop_predicate") });
         let packed: PackedTokens = { content: [] };
         let packedTokens: Token[] = [];
         let endPos: number | undefined = undefined;
@@ -225,6 +226,12 @@ export class ClientLine {
 export type CachedLinePullParams<T> = {
     query?: RQ<T> | undefined,
     sampler?: SamplerConstructor | undefined,
+    minSymbols?: number | undefined,
+    minTokens?: number | undefined,
+    maxSymbols?: number | undefined,
+    maxTokens?: number | undefined,
+    maxRetries?: number | undefined,
+    randomizeSamplerSeed?: boolean | undefined,
     inference?: InferenceLineParams | undefined,
 };
 export class CachedLine {
@@ -242,11 +249,35 @@ export class CachedLine {
         await this.origin.saveContent(file);
     }
     public async pull<T>(params: CachedLinePullParams<T>) {
+        const tooMuch = Symbol("too_much");
+        const inference = blendObjects(params.inference ?? {});
+        inference.max_tokens = inference.max_tokens === undefined ? params.maxTokens : Math.min(inference.max_tokens, params.maxTokens ?? Number.POSITIVE_INFINITY);
         await this.cancel();
-        await this.origin.setSampler(params.sampler ?? [{ type: "greedy" }], this.origin.tokens.length);
-        const result = await (params.query ?? RQ.never()).pull(this.origin, params.inference);
-        await this.origin.setSampler([{ type: "greedy" }], this.origin.tokens.length);
-        return result;
+        const start = this.tokens.length;
+        let sampler = params.sampler ?? [{ type: "greedy" }];
+        let retries = 0;
+        while (true) {
+            if (retries > (params.maxRetries ?? 0)) {
+                throw new Error(`cannot pull from line with given params, maxRetries=${params.maxRetries ?? 0}`);
+            }
+            await this.origin.setSampler(sampler, this.origin.tokens.length);
+            const result = await (RQ.some([
+                RQ.symbols(n => n >= (params.maxSymbols ?? Number.POSITIVE_INFINITY), () => tooMuch),
+                params.query ?? RQ.never(),
+            ])).pull(this.origin, inference);
+            await this.origin.setSampler([{ type: "greedy" }], this.origin.tokens.length);
+            const textIsSmall = (result.result.text ?? "").length < (params.minSymbols ?? 0);
+            if (result.reason === "too_much" || textIsSmall || result.result.tokens.length < (params.minTokens ?? 0)) {
+                if (params.randomizeSamplerSeed) {
+                    sampler = samplerWithSeed(sampler, crypto.randomUUID());
+                }
+                await this.goto(start);
+                retries++;
+                continue;
+            } else {
+                return result as RQResult<T> | RQResultInference;
+            }
+        }
     }
     public async step(...content: ContentElem[]) {
         const input = this.origin.client.parse(...content);
