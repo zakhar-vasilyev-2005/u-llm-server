@@ -38,10 +38,10 @@ export type ModelClientEvents = ModelEventsRaw & {
 export const ModelClientParamsScheme = z.object({
     conn: z.union([z.object({
         unix: z.string(),
-        host: z.undefined().optional(),
-        port: z.undefined().optional(),
+        host: z.never().optional(),
+        port: z.never().optional(),
     }), z.object({
-        unix: z.undefined().optional(),
+        unix: z.never().optional(),
         host: z.string().optional(),
         port: z.int().min(1024).max(65535),
     })]),
