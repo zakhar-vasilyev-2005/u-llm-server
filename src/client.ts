@@ -1,5 +1,5 @@
 import path from "path";
-import { type ModelParamsSerialized } from "./llama-base.js";
+import { ModelParamsSchema, type ModelParamsSerialized } from "./llama-base.js";
 import { SResultArgs, SCommandArgs, SEventArgs, SMessageSchema, type SCommand, type SMessage, SToken } from './server-schemas.js';
 import { createConnection, Socket, type NetConnectOpts } from "net";
 import { EventEmitter } from "events";
@@ -35,17 +35,26 @@ export type ModelClientEvents = ModelEventsRaw & {
     raw_message: [SMessage],
     client_close: [],
 };
-export interface ModelClientParams {
-    conn: ConnOption,
-    timeout?: number,
-    fallbackStartServer?: undefined | {
-        modelFile: string,
-        modelParams: ModelParamsSerialized,
-        stdout?: number | IOType | Stream | null,
-        stderr?: number | IOType | Stream | null,
-        timeout?: number
-    }
-};
+export const ModelClientParamsScheme = z.object({
+    conn: z.union([z.object({
+        unix: z.string(),
+        host: z.undefined().optional(),
+        port: z.undefined().optional(),
+    }), z.object({
+        unix: z.undefined().optional(),
+        host: z.string().optional(),
+        port: z.int().min(1024).max(65535),
+    })]),
+    timeout: z.number().nonnegative(),
+    fallbackStartServer: z.object({
+        modelFile: z.string(),
+        modelParams: ModelParamsSchema,
+        stdout: z.union([z.int().positive(), z.enum(["ignore", "inherit"])]).optional(),
+        stderr: z.union([z.int().positive(), z.enum(["ignore", "inherit"])]).optional(),
+        timeout: z.number().nonnegative().optional(),
+    }).optional(),
+});
+export type ModelClientParams = z.output<typeof ModelClientParamsScheme>;
 export type TemplateInput = {
     messages: {
         role: ChatRole,
@@ -71,7 +80,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             }
             let { modelFile, modelParams, stdout, stderr, timeout: startTimeout } = fallbackStartServer;
             stderr ??= "inherit";
-            stdout ??= null;
+            stdout ??= "ignore";
             startTimeout ??= 0;
             const serverProc = fork(
                 path.join(import.meta.dirname, "start-server.js"),
