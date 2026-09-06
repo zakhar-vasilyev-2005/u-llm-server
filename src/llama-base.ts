@@ -195,7 +195,55 @@ export class LibLlama extends Lib {
     public vocab_n_tokens(vocab_ptr: bigint): number {
         return this.lib.func("llama_vocab_n_tokens", Int, [Ptr])(vocab_ptr) as number;
     }
-    public detokenize(vocab_ptr: bigint, tokens: number[], unparse_special: boolean, remove_special: boolean = false): Buffer {
+    public vocab_bos(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_bos", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_eos(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_eos", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_eot(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_eot", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_sep(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_sep", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_nl(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_nl", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_pad(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_pad", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_mask(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_mask", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_get_add_bos(vocab_ptr: bigint): boolean {
+        return this.lib.func("llama_vocab_get_add_bos", Bool, [Ptr])(vocab_ptr) as boolean;
+    }
+    public vocab_get_add_eos(vocab_ptr: bigint): boolean {
+        return this.lib.func("llama_vocab_get_add_eos", Bool, [Ptr])(vocab_ptr) as boolean;
+    }
+    public vocab_get_add_sep(vocab_ptr: bigint): boolean {
+        return this.lib.func("llama_vocab_get_add_sep", Bool, [Ptr])(vocab_ptr) as boolean;
+    }
+    public vocab_fim_pre(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_fim_pre", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_fim_suf(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_fim_suf", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_fim_mid(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_fim_mid", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_fim_pad(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_fim_pad", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_fim_rep(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_fim_rep", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public vocab_fim_sep(vocab_ptr: bigint): number {
+        return this.lib.func("llama_vocab_fim_sep", Int, [Ptr])(vocab_ptr) as number;
+    }
+    public detokenize(vocab_ptr: bigint, tokens: number[] | Int32Array, unparse_special: boolean, remove_special: boolean = false): Buffer {
         const fn = (buffer: Buffer) => this.lib.func("llama_detokenize", Int, [Ptr, pointer(Int), Int, out(pointer(Char)), Int, Bool, Bool])(
             vocab_ptr, tokens, tokens.length, buffer, buffer.byteLength, remove_special, unparse_special
         );

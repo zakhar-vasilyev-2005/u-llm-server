@@ -3,6 +3,7 @@ import { type ModelParamsSerialized } from "./llama-base.js";
 import { ModelServer, type ConnOption } from "./server.js";
 import { Argument, Command, Option } from 'commander';
 import { Yurandom } from "yurandom/index.js";
+import { getPathToEmbeddedBinaries } from "./embedded_binaries_path.js";
 
 export * from './llama.js';
 export * from './model.js';
@@ -11,11 +12,11 @@ export * from './server.js';
 export * from './client.js';
 export * from './client-line.js';
 export * from './server-schemas.js';
+export * from './embedded_binaries_path.js';
 
 
 export const DEFAULT_PORT = 37213;
-export const program = new Command();
-program
+export const program = (new Command()
     .name('u-llm-server')
     .description('A llama.cpp-based inference server with slightly extended capabilities in realtime inference control.')
     .version('1.0.0')
@@ -87,7 +88,8 @@ program
             const rng = new Yurandom(seed);
             process.exit(rng.int(10, 50));
         }
-    });
+    })
+);
 
 
 export async function main(modelFile: string, modelParams: ModelParamsSerialized, connections: ConnOption[]) {
@@ -104,7 +106,7 @@ export async function main(modelFile: string, modelParams: ModelParamsSerialized
             server.on("close", () => resolve(undefined));
         }),
         new Promise(resolve => {
-            server.run(path.join(path.dirname(import.meta.dirname), "binaries"));
+            server.run(getPathToEmbeddedBinaries());
             resolve(undefined);
         })
     ]);

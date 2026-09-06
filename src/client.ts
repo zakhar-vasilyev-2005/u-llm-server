@@ -8,15 +8,16 @@ import { Yurandom } from 'yurandom';
 import { createFreeEvent } from "./event-util.js";
 import { extractMiddle } from "./extract-middle.js";
 import { Template } from "@huggingface/jinja";
-import { fork, type IOType } from "child_process";
-import type Stream from "stream";
-import type { ConnOption } from "./server.js";
+import { ChildProcess, fork } from "child_process";
 import type { Serializable } from "./serializable.js";
-import type { TokenInfo } from "./tokeninfo-base.js";
-import { expectDefined } from "./expect.js";
 import { GrowBuffer } from "./growbuffer.js";
 import type { InputElem } from "./model.js";
-import { stripUndefined } from "./typeutils.js";
+import { ModelVocab } from "./vocab.js";
+import { blendObjects } from "./typeutils.js";
+import { getPathToEmbeddedBinaries, getPathToLlama } from "./embedded_binaries_path.js";
+
+
+
 
 export const defaultTemplateString = `
 {{- bos_token }}
@@ -40,12 +41,14 @@ export const ModelClientParamsScheme = z.object({
         unix: z.string(),
         host: z.never().optional(),
         port: z.never().optional(),
+        timeout: z.number().nonnegative().optional(),
     }), z.object({
         unix: z.never().optional(),
         host: z.string().optional(),
         port: z.int().min(1024).max(65535),
+        timeout: z.number().nonnegative().optional(),
     })]),
-    timeout: z.number().nonnegative(),
+    vocabFile: z.string(),
     fallbackStartServer: z.object({
         modelFile: z.string(),
         modelParams: ModelParamsSchema,
@@ -69,11 +72,11 @@ export type ContentElem = ContentElemBase | ContentElemBase[];
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 export class ModelClient extends EventEmitter<ModelClientEvents> {
     public static async create(params: ModelClientParams) {
-        let { conn, timeout: connectTimeout, fallbackStartServer } = params;;
-        connectTimeout ??= 500;
+        let { conn, fallbackStartServer } = params;;
+        conn.timeout ??= 500;
         let client: ModelClient;
         try {
-            client = await ModelClient.connect(conn, connectTimeout);
+            client = await ModelClient.connect(params, conn.timeout);
         } catch (e) {
             if (fallbackStartServer === undefined) {
                 throw new Error(`server not available`);
@@ -88,32 +91,33 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                 { detached: true, stdio: [null, stdout, stderr, "ipc"] }
             );
             try {
-                client = await ModelClient.connect(conn, Math.max(0, startTimeout));
+                client = await ModelClient.connect(params, startTimeout, serverProc);
             } catch (e) {
                 serverProc.kill("SIGKILL");
-                throw Object.assign(new Error(`cannot start server in given timeout`), { reason: e });
+                throw Object.assign(new Error(`cannot start server in given timeout (timeout = ${startTimeout}ms)`), { reason: e });
             }
         }
         return client;
     }
-    public static async connect(conn: ConnOption, timeout: number = 0): Promise<ModelClient> {
+    public static async connect(params: ModelClientParams, timeout: number, serverProc: ChildProcess | undefined = undefined): Promise<ModelClient> {
+        const { conn } = params;
         if (timeout <= 0) {
-            const params = (conn.unix !== undefined ? { path: conn.unix } : { port: conn.port, host: conn.host ?? "localhost" }) as NetConnectOpts;
+            const connParams = (conn.unix !== undefined ? { path: conn.unix } : { port: conn.port, host: conn.host ?? "localhost" }) as NetConnectOpts;
             let errBuffer: Error[] = [];
             const errBufferizer = (err: Error) => errBuffer.push(err);
             const socket = await new Promise<Socket>((resolve, reject) => {
-                const socket = createConnection(params, () => resolve(socket));
+                const socket = createConnection(connParams, () => resolve(socket));
                 socket.on("error", errBufferizer);
                 socket.once("error", reject);
             });
-            const client = new ModelClient(socket, {}, {}, {}, new Template(defaultTemplateString));
+            const vocab = new ModelVocab(getPathToLlama(getPathToEmbeddedBinaries()), params.vocabFile);
+            const client = new ModelClient(socket, {}, {}, new Template(defaultTemplateString), vocab, serverProc);
             const errRouter = (err: Error) => client.emit("socket_error", err);
             socket.off("error", errBufferizer);
             errBuffer.forEach(errRouter);
             socket.on("error", errRouter);
-            const { metadata, tokeninfo, model_params } = await client.exec("start", null);
+            const { metadata, model_params } = await client.exec("start", null);
             Object.assign(client.modelMetadata, metadata);
-            Object.assign(client.modelTokenInfo, tokeninfo);
             Object.assign(client.modelParams, model_params);
             const tempalteStr = metadata["tokenizer.chat_template"];
             if (tempalteStr === undefined) {
@@ -135,7 +139,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                         }
                         setTimeout(() => reject(errTimeout), delay);
                         try {
-                            resolve(await ModelClient.connect(conn));
+                            resolve(await ModelClient.connect(params, 0));
                         } catch (e) {
                             reject(e);
                         }
@@ -155,9 +159,10 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
     protected constructor(
         public readonly socket: Socket,
         public readonly modelMetadata: Record<string, string>,
-        public readonly modelTokenInfo: Record<number, TokenInfo>,
         public readonly modelParams: ModelParamsSerialized,
         public readonly template: Template,
+        public readonly vocab: ModelVocab,
+        public readonly serverProc: ChildProcess | undefined,
     ) {
         super();
         this.setMaxListeners(50);
@@ -226,7 +231,14 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
         });
     }
     public scheme(constructor: TemplateInput, startKey: string = "\uE000", endKey: string = "\uE001") {
-        const text = this.template.render(constructor);
+        const prefix = {
+            bos_token: this.vocab.special.add_bos ? this.vocab.special.bos?.piece ?? "" : "",
+            eos_token: this.vocab.special.add_eos ? this.vocab.special.eos?.piece ?? "" : "",
+        };
+        const suffix = {
+            add_generation_prompt: !!constructor["add_generation_prompt"],
+        };
+        const text = this.template.render(blendObjects(prefix, constructor, suffix));
         const content = extractMiddle(text, startKey, endKey);
         if (content === undefined) {
             throw new Error(`cannot extract scheme from given pattern`);
@@ -267,7 +279,6 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             if (elem.tokens === undefined) {
                 return [elem];
             } else {
-                const tokens = elem.tokens.map(t => expectDefined(this.modelTokenInfo[t]));
                 let pieces: { special: boolean, text: string }[] = [];
                 let buf = new GrowBuffer(100);
                 let special = false
@@ -275,12 +286,12 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                     pieces.push({ special, text: buf.buffer.toString("utf8") });
                     buf.clear(100);
                 };
-                for (const token of tokens) {
-                    if (token.special !== special) {
+                for (const token of elem.tokens) {
+                    if (this.vocab.isSpecial(token) !== special) {
                         flush();
-                        special = token.special;
+                        special = this.vocab.isSpecial(token);
                     }
-                    buf.push(Buffer.from(token.pieceBytesBase64, "base64"));
+                    buf.push(this.vocab.toPiece(token));
                 }
                 flush();
                 return pieces;

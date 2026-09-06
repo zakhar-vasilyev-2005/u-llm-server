@@ -2,8 +2,8 @@ import { ModelClient } from './client.js';
 import { ClientLine } from './client-line.js';
 
 const client = await ModelClient.create({
-    conn: { port: 32256 },
-    timeout: 1,
+    conn: { port: 32256, timeout: 1000 },
+    vocabFile: "/mnt/120gb/Users/Public/LLMs/Llama-3.2-1B-Instruct-IQ4_XS.gguf",
     fallbackStartServer: {
         modelFile: "/mnt/120gb/Users/Public/LLMs/Llama-3.2-1B-Instruct-IQ4_XS.gguf",
         modelParams: {
@@ -28,6 +28,7 @@ try {
     console.log(out2);
 } finally {
     await client.close();
+    client.serverProc?.kill("SIGKILL");
 }
 
 

@@ -452,7 +452,7 @@ export class RQ<const T> {
     }
     public static eog<const T>(cb: RQCallback<T>): RQ<T> {
         return this.cond(function (data) {
-            return (data.next !== null && !!data.line.client.modelTokenInfo[data.next.token]?.eog) ? cb(data) : undefined;
+            return (data.next !== null && data.line.client.vocab.isEOG(data.next.token)) ? cb(data) : undefined;
         });
     }
     public static tokens<const T>(cond: (tokens: number) => boolean, cb: RQCallback<T>): RQ<T> {

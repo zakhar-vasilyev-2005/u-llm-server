@@ -50,13 +50,6 @@ export const SResultArgs = {
     start: z.object({
         model_params: ModelParamsSchema,
         metadata: z.record(z.string(), z.string()),
-        tokeninfo: z.record(z.string(), z.object({
-            token: z.number(),
-            pieceBytesBase64: z.string(),
-            pieceText: z.string(),
-            eog: z.boolean(),
-            special: z.boolean(),
-        })),
     }),
     set_context: z.null(),
     line_init: z.object({
