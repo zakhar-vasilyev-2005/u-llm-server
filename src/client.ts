@@ -49,7 +49,7 @@ export const ModelClientParamsScheme = z.object({
         timeout: z.number().nonnegative().optional(),
     })]),
     vocabFile: z.string(),
-    vocabLogLevel: z.enum(["debug", "info", "warn", "error"]),
+    vocabLogLevel: z.enum(["debug", "info", "warn", "error"]).optional(),
     fallbackStartServer: z.object({
         modelFile: z.string(),
         modelParams: ModelParamsSchema,
