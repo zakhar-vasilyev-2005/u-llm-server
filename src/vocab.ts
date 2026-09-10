@@ -1,5 +1,5 @@
 import type { Token } from "./client.js";
-import { LibLlama } from "./llama-base.js";
+import { GGMLLogLevels, LibLlama, type GGMLLogLevel } from "./llama-base.js";
 
 
 
@@ -23,8 +23,9 @@ export class ModelVocab {
         add_eos: boolean,
         add_sep: boolean,
     };
-    public constructor(llamaLibPath: string, vocabFile: string) {
+    public constructor(llamaLibPath: string, vocabFile: string, vocabLog: (lv: GGMLLogLevel, msg: string) => void = () => { }) {
         this.llama = new LibLlama(llamaLibPath);
+        this.llama.log_set(vocabLog);
         this.file = vocabFile;
         const mparams = this.llama.model_default_params();
         mparams.vocab_only = true;

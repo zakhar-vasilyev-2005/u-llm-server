@@ -1,5 +1,5 @@
 import path from "path";
-import { ModelParamsSchema, type ModelParamsSerialized } from "./llama-base.js";
+import { GGMLLogLevels, ModelParamsSchema, type ModelParamsSerialized } from "./llama-base.js";
 import { SResultArgs, SCommandArgs, SEventArgs, SMessageSchema, type SCommand, type SMessage, SToken } from './server-schemas.js';
 import { createConnection, Socket, type NetConnectOpts } from "net";
 import { EventEmitter } from "events";
@@ -49,6 +49,7 @@ export const ModelClientParamsScheme = z.object({
         timeout: z.number().nonnegative().optional(),
     })]),
     vocabFile: z.string(),
+    vocabLogLevel: z.enum(["debug", "info", "warn", "error"]),
     fallbackStartServer: z.object({
         modelFile: z.string(),
         modelParams: ModelParamsSchema,
@@ -110,7 +111,14 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
                 socket.on("error", errBufferizer);
                 socket.once("error", reject);
             });
-            const vocab = new ModelVocab(getPathToLlama(getPathToEmbeddedBinaries()), params.vocabFile);
+            let lastLevel = 0;
+            const vocab = new ModelVocab(getPathToLlama(getPathToEmbeddedBinaries()), params.vocabFile, (lv, msg) => {
+                const level = lv === "cont" ? lastLevel : GGMLLogLevels[lv];
+                if (level >= GGMLLogLevels[params.vocabLogLevel ?? "warn"]) {
+                    console.warn(`LLAMA LOG ${lv}: ${msg.trim()}`);
+                }
+                lastLevel = level;
+            });
             const client = new ModelClient(socket, {}, {}, new Template(defaultTemplateString), vocab, serverProc);
             const errRouter = (err: Error) => client.emit("socket_error", err);
             socket.off("error", errBufferizer);
