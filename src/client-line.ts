@@ -3,7 +3,7 @@ import { SEventArgs } from './server-schemas.js';
 import * as z from "zod";
 import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
 import type { ContentElem, ModelClient, Token } from "./client.js";
-import { blendObjects, stripFields } from "./typeutils.js";
+import { blendObjects, stripFields, type Defined } from "./typeutils.js";
 import { samplerWithSeed } from "./sampler-seed.js";
 
 
@@ -237,6 +237,7 @@ export type CachedLinePullParams<T> = {
 export class CachedLine {
     public tokens: Token[] = [];
     public allTokens: Token[] = [];
+    public prefix: { special: boolean, text: string }[] = [];
     public static async create(client: ModelClient, lineId?: string | undefined) {
         return new CachedLine(await ClientLine.create(client, lineId));
     }
@@ -280,67 +281,78 @@ export class CachedLine {
         }
     }
     public async step(...content: ContentElem[]) {
-        const input = this.origin.client.parse(...content);
-        let index = 0;
-        let prefix = [] as { token?: number | undefined, piece: string, special: boolean }[];
-        const shift = () => {
-            const prefixElem = prefix.shift();
-            if (prefixElem === undefined) {
-                return this.allTokens[this.tokens.length + index++];
-            } else {
-                return prefixElem;
-            }
-        };
-        const unshift = (e: { token?: number | undefined, piece: string, special: boolean }) => {
-            const lastToken = this.allTokens[this.tokens.length + index - 1]?.token;
-            if (lastToken !== undefined && e.token === lastToken) {
-                index--;
-            } else {
-                prefix.unshift(e);
-            }
-        };
-        while (true) {
-            const token = shift();
-            const elem = input.shift();
-            if (elem === undefined) {
-                if (token !== undefined) {
-                    unshift(token);
+        let input = this.origin.client.parse(...this.prefix, ...content);
+        this.prefix = [];
+        let hidden = this.allTokens.slice(this.tokens.length);
+        function isMatches(hidden: { special: boolean, text: string }, input: { special: boolean, text: string }[]) {
+            const items: typeof input = [];
+            while (items.map(e => e.text.length).reduce((a, b) => a + b, 0) < hidden.text.length) {
+                const item = input.shift();
+                if (item === undefined) {
+                    return false;
                 }
-                break;
+                items.push(item);
+            }
+            const text = items.map(e => e.text).join("");
+            if (hidden.special) {
+                return text.startsWith(hidden.text) && items.every(e => e.special);
             } else {
-                if (token === undefined) {
-                    input.unshift(elem);
-                    break;
-                } else if (token.special && !elem.special) {
-                    unshift(token);
-                    input.unshift(elem);
-                    break;
-                } else if (elem.text.startsWith(token.piece)) {
-                    elem.text = elem.text.slice(token.piece.length);
-                    input.unshift(elem);
-                    continue;
-                } else if (token.piece.startsWith(elem.text)) {
-                    unshift({ special: token.special || elem.special, piece: token.piece.slice(elem.text.length) });
-                    continue;
-                } else {
-                    unshift(token);
-                    input.unshift(elem);
-                    break;
-                }
+                return text.startsWith(hidden.text);
             }
         }
-        const keep = Math.max(0, index - prefix.length);
-        this.tokens.push(...this.allTokens.slice(this.tokens.length, this.tokens.length + keep));
-        await this.cancel();
+        while (true) {
+            const hiddenToken = hidden.shift();
+            if (hiddenToken === undefined) {
+                break;
+            }
+            if (isMatches({ special: hiddenToken.special, text: hiddenToken.piece }, [...input.slice(0, hiddenToken.piece.length)])) {
+                let nChars = hiddenToken.piece.length;
+                while (nChars > 0) {
+                    const item = input[0] as Defined<typeof input[number]>;
+                    let piece = item.text;
+                    let nCharsStep = Math.min(piece.length, nChars);
+                    nChars -= nCharsStep;
+                    piece = piece.slice(nCharsStep);
+                    item.text = piece;
+                    if (piece.length === 0) {
+                        input.shift();
+                    }
+                }
+                this.tokens.push(hiddenToken);
+                continue;
+            } else {
+                let inputMatches: typeof input = [];
+                const special = hiddenToken.special;
+                let text = hiddenToken.piece;
+                while (true) {
+                    const item = input.shift();
+                    if (item === undefined) {
+                        break;
+                    }
+                    if (isMatches(item, [{ special, text }])) {
+                        text = text.slice(item.text.length);
+                        inputMatches.push(item);
+                    }
+                }
+                this.prefix = inputMatches;
+                hidden = [];
+                this.cancel();
+                this.origin.step(input);
+                this.tokens = this.allTokens = this.origin.tokens;
+                break;
+            }
+        }
         if (input.length !== 0) {
-            await this.origin.step(...input);
-            this.tokens = [...this.origin.tokens];
-            this.allTokens = [...this.origin.tokens];
+            await this.origin.step(input);
         }
     }
     public async cancel() {
         await this.origin.goto(this.tokens.length);
         this.allTokens = [...this.tokens];
+        if (this.prefix.length) {
+            await this.origin.step(...this.prefix);
+            this.prefix = [];
+        }
     }
     public async goto(nTokens: number) {
         if (nTokens <= this.allTokens.length) {
