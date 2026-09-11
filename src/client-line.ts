@@ -354,6 +354,9 @@ export class CachedLine {
             this.prefix = [];
         }
     }
+    public checkpoint() {
+        return new CachedLineCheckpoint(this);
+    }
     public async goto(nTokens: number) {
         this.prefix = [];
         if (nTokens <= this.allTokens.length) {
@@ -367,6 +370,18 @@ export class CachedLine {
     }
     public async free() {
         await this.origin.free();
+    }
+}
+export class CachedLineCheckpoint {
+    public readonly nTokens: number;
+    public readonly prefix: { special: boolean, text: string }[];
+    public constructor(public readonly line: CachedLine) {
+        this.nTokens = line.tokens.length;
+        this.prefix = [...line.prefix].map(e => Object.assign({}, e));
+    }
+    public async restore() {
+        await this.line.goto(this.nTokens);
+        await this.line.step(this.prefix);
     }
 }
 
