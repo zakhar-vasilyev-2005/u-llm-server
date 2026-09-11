@@ -355,6 +355,7 @@ export class CachedLine {
         }
     }
     public async goto(nTokens: number) {
+        this.prefix = [];
         if (nTokens <= this.allTokens.length) {
             this.tokens = this.allTokens.slice(0, nTokens);
         } else {
