@@ -322,14 +322,13 @@ export class CachedLine {
                 continue;
             } else {
                 let inputMatches: typeof input = [];
-                const special = hiddenToken.special;
                 let text = hiddenToken.piece;
                 while (true) {
                     const item = input.shift();
                     if (item === undefined) {
                         break;
                     }
-                    if (isMatches(item, [{ special, text }])) {
+                    if (isMatches(item, [{ special: true, text }])) {
                         text = text.slice(item.text.length);
                         inputMatches.push(item);
                     }
