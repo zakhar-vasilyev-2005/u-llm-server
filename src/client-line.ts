@@ -3,7 +3,7 @@ import { SEventArgs } from './server-schemas.js';
 import * as z from "zod";
 import type { InferenceLineParams, InputElem, StopReason } from "./model.js";
 import type { ContentElem, ModelClient, Token } from "./client.js";
-import { blendObjects, stripFields, type Defined } from "./typeutils.js";
+import { blendObjects, stripFields, type Defined, type PromiseOrNot } from "./typeutils.js";
 import { samplerWithSeed } from "./sampler-seed.js";
 
 
@@ -233,6 +233,7 @@ export type CachedLinePullParams<T> = {
     maxRetries?: number | undefined,
     randomizeSamplerSeed?: boolean | undefined,
     inference?: InferenceLineParams | undefined,
+    validator?: ((result: RQResult<T> | RQResultInference) => PromiseOrNot<boolean>) | undefined,
 };
 export class CachedLine {
     public tokens: Token[] = [];
@@ -268,7 +269,12 @@ export class CachedLine {
             ])).pull(this.origin, inference);
             await this.origin.setSampler([{ type: "greedy" }], this.origin.tokens.length);
             const textIsSmall = (result.result.text ?? "").length < (params.minSymbols ?? 0);
-            if (result.reason === "too_much" || textIsSmall || result.result.tokens.length < (params.minTokens ?? 0)) {
+            if (
+                result.reason === tooMuch ||
+                textIsSmall ||
+                result.result.tokens.length < (params.minTokens ?? 0) ||
+                !(params.validator === undefined ? true : await params.validator(result as any))
+            ) {
                 if (params.randomizeSamplerSeed) {
                     sampler = samplerWithSeed(sampler, crypto.randomUUID());
                 }
