@@ -6,7 +6,6 @@ import { EventEmitter } from "events";
 import * as z from "zod";
 import { Yurandom } from 'yurandom';
 import { createFreeEvent } from "./event-util.js";
-import { extractMiddle } from "./extract-middle.js";
 import { Template } from "@huggingface/jinja";
 import { ChildProcess, fork } from "child_process";
 import type { Serializable } from "./serializable.js";
@@ -15,6 +14,7 @@ import type { InputElem } from "./model.js";
 import { ModelVocab } from "./vocab.js";
 import { blendObjects } from "./typeutils.js";
 import { getPathToEmbeddedBinaries, getPathToLlama } from "./embedded_binaries_path.js";
+import { removeRanges } from "./remove-string-ranges.js";
 
 
 
@@ -247,7 +247,7 @@ export class ModelClient extends EventEmitter<ModelClientEvents> {
             add_generation_prompt: !!constructor["add_generation_prompt"],
         };
         const text = this.template.render(blendObjects(prefix, constructor, suffix));
-        const content = extractMiddle(text, startKey, endKey);
+        const content = removeRanges(text, startKey, endKey);
         if (content === undefined) {
             throw new Error(`cannot extract scheme from given pattern`);
         }
